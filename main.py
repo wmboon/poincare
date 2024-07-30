@@ -3,6 +3,7 @@ import scipy.sparse as sps
 
 import pygeon as pg
 from pygeon.numerics.differentials import exterior_derivative as diff
+from pygeon.numerics.linear_system import create_restriction
 
 
 class Poincare:
@@ -126,8 +127,8 @@ class Poincare:
         n_minus_k = self.dim - k
         _diff = diff(self.mdg, n_minus_k + 1)
 
-        R_dom = pg.numerics.linear_system.create_restriction(flag_dom)
-        R_ran = pg.numerics.linear_system.create_restriction(flag_ran)
+        R_dom = create_restriction(flag_dom)
+        R_ran = create_restriction(flag_ran)
 
         splu = sps.linalg.splu(R_dom @ _diff @ R_ran.T)
 
@@ -147,6 +148,15 @@ class Poincare:
         return self.op[n_minus_k](f)
 
     def decompose(self, k, f):
+        """use the Poincaré operators to decompose f = pd(f) + dp(f)
+
+        Args:
+            k (int): order of the k-form f
+            f (np.ndarray): the function to be decomposed
+
+        Returns:
+            tuple(np.ndarray): the decomposition of f as (dp(f), pd(f))
+        """
         n_minus_k = self.dim - k
 
         if k == self.dim:  # then df = 0
