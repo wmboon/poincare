@@ -134,7 +134,7 @@ class Poincare:
 
         return lambda f: R_ran.T @ splu.solve(R_dom @ f)
 
-    def apply(self, n_minus_k, f):
+    def apply(self, k, f):
         """Apply the Poincare operator
 
         Args:
@@ -145,7 +145,7 @@ class Poincare:
             np.ndarray: the image of the Poincaré operator under f
         """
 
-        return self.op[n_minus_k](f)
+        return self.op[k](f)
 
     def decompose(self, k, f):
         """use the Poincaré operators to decompose f = pd(f) + dp(f)
@@ -173,6 +173,16 @@ class Poincare:
 
         return pdf, dpf
 
+    def check_chain_property(self, k, f):
+
+        if k <= 0:
+            ppf = 0
+        else:
+            pf = self.apply(k, f)
+            ppf = self.apply(k - 1, pf)
+
+        assert np.allclose(ppf, 0)
+
 
 if __name__ == "__main__":
 
@@ -194,5 +204,7 @@ if __name__ == "__main__":
     for k, f in enumerate([f_0, f_1, f_2, f_3]):
         pdf, dpf = poin.decompose(k, f)
         assert np.allclose(f, pdf + dpf)
+
+        poin.check_chain_property(k, f)
 
     pass
