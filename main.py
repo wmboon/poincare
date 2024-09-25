@@ -5,8 +5,6 @@ import porepy as pp
 import pygeon as pg
 from pygeon.numerics.differentials import exterior_derivative as diff
 from pygeon.numerics.linear_system import create_restriction
-from pygeon.numerics.innerproducts import mass_matrix
-from pygeon.numerics.stiffness import stiff_matrix
 
 
 class Poincare:
@@ -203,36 +201,13 @@ class Poincare:
         assert np.allclose(ppf, 0)
 
 
-if __name__ == "__main__":
+def test_solver(poin, f):
+    # Check the four-step solver.
+    mdg = poin.mdg
+    dim = mdg.dim_max()
 
-    N, dim = 10, 2
-
-    sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
-    mdg = pg.as_mdg(sd)
-    pg.convert_from_pp(mdg)
-    mdg.compute_geometry()
-
-    # tree = pg.SpanningTree(mdg, "all_bdry")
-    # tree.visualize_2d(mdg, "tree.pdf", False, True, True)
-
-    f_0 = np.random.rand(sd.num_nodes)
-    f_1 = np.random.rand(sd.num_ridges)
-    f_2 = np.random.rand(sd.num_faces)
-    f_3 = np.random.rand(sd.num_cells)
-
-    f = [f_0, f_1, f_2, f_3]
-
-    if dim == 2:
-        f = f[1:]
-
-    poin = Poincare(mdg)
-    pg.cell_stiff
-
-    for k, f_ in enumerate(f):
-        pdf, dpf = poin.decompose(k, f_)
-        assert np.allclose(f_, pdf + dpf)
-
-        poin.check_chain_property(k, f_)
+    from pygeon.numerics.innerproducts import mass_matrix
+    from pygeon.numerics.stiffness import stiff_matrix
 
     # assemble matrices
     M = [mass_matrix(mdg, dim - k, None) for k in range(dim + 1)]
@@ -276,7 +251,7 @@ if __name__ == "__main__":
         assert np.allclose(v_true, v)
 
         # Step 3
-        LS = pg.LinearSystem(S[k], M[k] @ f[k] - MD[k - 1] @ v0)
+        LS = pg.LinearSystem(S[k], M[k] @ f[k] - MD[k - 1] @ v)
         LS.flag_ess_bc(~poin.bar_spaces[k], np.zeros_like(poin.bar_spaces[k]))
         print(np.sum(poin.bar_spaces[k]))
 
@@ -292,4 +267,40 @@ if __name__ == "__main__":
         u = v3 + D[k - 1] @ v4
         assert np.allclose(u_true, u)
 
-    pass
+
+def test_properties(poin, f):
+    # Check the decomposition and chain property
+    for k, f_ in enumerate(f):
+        pdf, dpf = poin.decompose(k, f_)
+        assert np.allclose(f_, pdf + dpf)
+
+        poin.check_chain_property(k, f_)
+
+
+if __name__ == "__main__":
+
+    N, dim = 5, 3
+
+    sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
+    # sd = pp.StructuredTetrahedralGrid([N] * dim)
+    mdg = pg.as_mdg(sd)
+    pg.convert_from_pp(mdg)
+    mdg.compute_geometry()
+
+    # tree = pg.SpanningTree(mdg, "all_bdry")
+    # tree.visualize_2d(mdg, "tree.pdf", False, True, True)
+
+    f_0 = np.random.rand(sd.num_nodes)
+    f_1 = np.random.rand(sd.num_ridges)
+    f_2 = np.random.rand(sd.num_faces)
+    f_3 = np.random.rand(sd.num_cells)
+
+    f = [f_0, f_1, f_2, f_3]
+
+    if dim == 2:
+        f = f[1:]
+
+    poin = Poincare(mdg)
+
+    # test_properties(poin, f)
+    test_solver(poin, f)
