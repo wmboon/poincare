@@ -5,10 +5,12 @@ import porepy as pp
 import pygeon as pg
 from pygeon.numerics.differentials import exterior_derivative as diff
 from pygeon.numerics.linear_system import create_restriction
+from pygeon.numerics.innerproducts import mass_matrix
+from pygeon.numerics.stiffness import stiff_matrix
 
 
 class Poincare:
-    def __init__(self, mdg):
+    def __init__(self, mdg: pg.MixedDimensionalGrid, create_ops=True):
         """
         Class for generating Poincaré operators p
         that satisfy pd + dp = I
@@ -20,7 +22,9 @@ class Poincare:
         self.mdg = mdg
         self.dim = mdg.dim_max()
         self.define_bar_spaces()
-        self.create_operators()
+
+        if create_ops:
+            self.create_operators()
 
     def euler_characteristic(self):
         sd = self.mdg.subdomains()[0]
@@ -44,7 +48,9 @@ class Poincare:
         self.bar_spaces[self.dim] = np.zeros(self.mdg.num_subdomain_cells(), dtype=bool)
 
         # Faces
-        self.bar_spaces[self.dim - 1] = pg.SpanningTree(mdg, "all_bdry").flagged_faces
+        self.bar_spaces[self.dim - 1] = pg.SpanningTree(
+            self.mdg, "all_bdry"
+        ).flagged_faces
 
         # Edges in 3D
         if self.dim == 3:
@@ -201,13 +207,37 @@ class Poincare:
         assert np.allclose(ppf, 0)
 
 
-def test_solver(poin, f):
+def generate_random_source(sd):
+    np.random.seed(0)
+    f_0 = np.random.rand(sd.num_nodes)
+    f_1 = np.random.rand(sd.num_ridges)
+    f_2 = np.random.rand(sd.num_faces)
+    f_3 = np.random.rand(sd.num_cells)
+
+    f = [f_0, f_1, f_2, f_3]
+
+    if sd.dim == 2:
+        f = f[1:]
+
+    return f
+
+
+def test_solver():
+    import time
+
+    N, dim = 15, 3
+
+    sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
+    mdg = pg.as_mdg(sd)
+    pg.convert_from_pp(mdg)
+    mdg.compute_geometry()
+
+    f = generate_random_source(sd)
+
+    poin = Poincare(mdg, False)
+
     # Check the four-step solver.
     mdg = poin.mdg
-    dim = mdg.dim_max()
-
-    from pygeon.numerics.innerproducts import mass_matrix
-    from pygeon.numerics.stiffness import stiff_matrix
 
     # assemble matrices
     M = [mass_matrix(mdg, dim - k, None) for k in range(dim + 1)]
@@ -215,60 +245,192 @@ def test_solver(poin, f):
     D = [diff(mdg, dim - k) for k in range(dim)]
     MD = [M[k + 1] @ D[k] for k in range(dim)]
 
+    f[0] -= np.sum(M[0] @ f[0])
+
+    def timed_solve(A, b):
+        t = time.time()
+        sol = sps.linalg.spsolve(A.tocsc(), b)
+        print("ndof: {}, Time: {:1.2f}s".format(len(b), time.time() - t))
+
+        return sol
+
+    def solve_subproblem(poin, k, rhs):
+        LS = pg.LinearSystem(S[k], rhs)
+        LS.flag_ess_bc(~poin.bar_spaces[k], np.zeros_like(poin.bar_spaces[k]))
+
+        return LS.solve(solver=timed_solve)
+
     for k in range(dim, 0, -1):
         print("k = {}".format(k))
 
         A = sps.bmat([[M[k - 1], -MD[k - 1].T], [MD[k - 1], S[k]]])
         LS = pg.LinearSystem(A, np.hstack((M[k - 1] @ f[k - 1], M[k] @ f[k])))
 
-        vu = LS.solve()
-        print(len(vu))
+        vu = LS.solve(solver=timed_solve)
 
         v_true = vu[: M[k - 1].shape[0]]
         u_true = vu[M[k - 1].shape[0] :]
 
         # Step 1
-        LS = pg.LinearSystem(S[k - 1], MD[k - 1].T @ f[k])
-        LS.flag_ess_bc(~poin.bar_spaces[k - 1], np.zeros_like(poin.bar_spaces[k - 1]))
-        print(np.sum(poin.bar_spaces[k - 1]))
-
-        v0 = LS.solve()
+        v_b = solve_subproblem(poin, k - 1, MD[k - 1].T @ f[k])
 
         # Step 2
         if k >= 2:
-            LS = pg.LinearSystem(S[k - 2], MD[k - 2].T @ (f[k - 1] - v0))
-            LS.flag_ess_bc(
-                ~poin.bar_spaces[k - 2], np.zeros_like(poin.bar_spaces[k - 2])
-            )
-            print(np.sum(poin.bar_spaces[k - 2]))
-
-            v1 = LS.solve()
-            v = v0 + D[k - 2] @ v1
+            w_v = solve_subproblem(poin, k - 2, MD[k - 2].T @ (f[k - 1] - v_b))
+            v = v_b + D[k - 2] @ w_v
         else:
-            print(0)
-            v = v0 - np.mean(v0 - v_true)
+            print("ndof: 0, Time: -s")
+            v = v_b - np.sum(M[0] @ v_b)
 
         assert np.allclose(v_true, v)
 
         # Step 3
-        LS = pg.LinearSystem(S[k], M[k] @ f[k] - MD[k - 1] @ v)
-        LS.flag_ess_bc(~poin.bar_spaces[k], np.zeros_like(poin.bar_spaces[k]))
-        print(np.sum(poin.bar_spaces[k]))
-
-        v3 = LS.solve()
+        u_b = solve_subproblem(poin, k, M[k] @ f[k] - MD[k - 1] @ v)
 
         # Step 4
-        LS = pg.LinearSystem(S[k - 1], M[k - 1] @ (v - f[k - 1]) - MD[k - 1].T @ v3)
-        LS.flag_ess_bc(~poin.bar_spaces[k - 1], np.zeros_like(poin.bar_spaces[k - 1]))
-        print(np.sum(poin.bar_spaces[k - 1]))
+        v_u = solve_subproblem(
+            poin, k - 1, M[k - 1] @ (v - f[k - 1]) - MD[k - 1].T @ u_b
+        )
 
-        v4 = LS.solve()
-
-        u = v3 + D[k - 1] @ v4
+        u = u_b + D[k - 1] @ v_u
         assert np.allclose(u_true, u)
 
 
-def test_properties(poin, f):
+def test_Poincare_constants(dim=2):
+    if dim == 2:
+        N_list = 2 ** np.arange(3, 8)
+    else:
+        N_list = 2 ** np.arange(5)
+
+    table = np.zeros((len(N_list), dim + 1))
+    table_ndof = np.zeros((len(N_list), dim), dtype=int)
+
+    for N_i, N in enumerate(N_list):
+        sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
+        mdg = pg.as_mdg(sd)
+
+        pg.convert_from_pp(mdg)
+        mdg.compute_geometry()
+
+        poin = Poincare(mdg)
+
+        table[N_i, 0] = np.mean(sd.cell_diameters())
+
+        for k in range(dim):
+
+            R = create_restriction(poin.bar_spaces[k])
+            M = R @ mass_matrix(mdg, dim - k, None) @ R.T
+            S = R @ stiff_matrix(mdg, dim - k, None) @ R.T
+
+            if k == 0:
+                proj = mass_matrix(mdg, dim - k, None)
+                proj /= np.sum(proj)
+                M_op = lambda v: M @ (v - np.ones(len(v) + 1) @ proj @ R.T @ v)
+                M2 = sps.linalg.LinearOperator(matvec=M_op, shape=M.shape)
+                labda_temp, _ = sps.linalg.eigsh(M2, 1, M=S, which="LM", tol=1e-3)
+
+            else:
+                labda_temp, _ = sps.linalg.eigsh(M, 1, M=S, which="LM", tol=1e-3)
+
+            table[N_i, k + 1] = np.sqrt(labda_temp[0])
+            table_ndof[N_i, k] = M.shape[0]
+
+    np.set_printoptions(formatter={"float": "{: 0.2e}".format})
+    print(table)
+    # print(table_ndof)
+
+
+def test_aux_precond(dim=2, k=1):
+    if dim == 2:
+        N_list = 2 ** np.arange(3, 8)
+    else:
+        N_list = 2 ** np.arange(5)
+
+    if dim == 2 and N_list[-1] == 4:
+        calc_cond = False
+    elif dim == 3 and N_list[-1] == 7:
+        calc_cond = False
+    else:
+        calc_cond = True
+
+    alpha_list = np.power(10.0, np.arange(-4, 1))
+
+    cond_table = np.zeros((len(N_list), len(alpha_list) + 1))
+    iter_table = np.zeros((len(N_list), len(alpha_list)), dtype=int)
+
+    for N_i, N in enumerate(N_list):
+        sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
+        mdg = pg.as_mdg(sd)
+
+        pg.convert_from_pp(mdg)
+        mdg.compute_geometry()
+
+        poin = Poincare(mdg)
+
+        cond_table[N_i, 0] = np.mean(sd.cell_diameters())
+
+        f = generate_random_source(sd)
+
+        # assemble matrices
+        M = [mass_matrix(mdg, dim - k, None) for k in range(dim + 1)]
+        S = [stiff_matrix(mdg, dim - k, None) for k in range(dim + 1)]
+        D = [diff(mdg, dim - k) for k in range(dim)]
+
+        def nonlocal_iterate(arr):
+            nonlocal iters
+            iters += 1
+
+        for alpha_i, alpha in enumerate(alpha_list):
+            print("N = {}, alpha = {:.2e}".format(N, alpha))
+            a_squared = alpha**2
+            A = a_squared * M[k] + S[k]
+
+            iters = 0
+
+            def precond(f):
+                LS1 = pg.LinearSystem(S[k], f)
+                LS1.flag_ess_bc(~poin.bar_spaces[k], np.zeros_like(poin.bar_spaces[k]))
+                first_term = LS1.solve()
+
+                LS2 = pg.LinearSystem(a_squared * S[k - 1], D[k - 1].T @ f)
+                LS2.flag_ess_bc(
+                    ~poin.bar_spaces[k - 1], np.zeros_like(poin.bar_spaces[k - 1])
+                )
+                second_term = D[k - 1] @ LS2.solve()
+
+                return first_term + second_term
+
+            P = sps.linalg.LinearOperator(matvec=precond, shape=A.shape)
+
+            v, _ = sps.linalg.minres(A, f[k], M=P, callback=nonlocal_iterate, rtol=1e-6)
+            if calc_cond:
+                lambda_max = sps.linalg.eigsh(
+                    precond(A), 1, which="LM", tol=1e-4, return_eigenvectors=False
+                )
+                lambda_min = sps.linalg.eigsh(
+                    precond(A), 1, which="SM", tol=1e-4, return_eigenvectors=False
+                )
+
+                cond_table[N_i, alpha_i + 1] = np.abs(lambda_max[0] / lambda_min[0])
+            iter_table[N_i, alpha_i] = iters
+
+    with np.printoptions(formatter={"float": "{: 0.2e}".format}):
+        print(cond_table)
+    print(iter_table)
+
+    pass
+
+
+def test_properties():
+    N, dim = 5, 3
+    sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
+    mdg = pg.as_mdg(sd)
+    pg.convert_from_pp(mdg)
+    mdg.compute_geometry()
+
+    f = generate_random_source(sd)
+    poin = Poincare(mdg)
+
     # Check the decomposition and chain property
     for k, f_ in enumerate(f):
         pdf, dpf = poin.decompose(k, f_)
@@ -277,30 +439,23 @@ def test_properties(poin, f):
         poin.check_chain_property(k, f_)
 
 
-if __name__ == "__main__":
-
-    N, dim = 5, 3
-
-    sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
-    # sd = pp.StructuredTetrahedralGrid([N] * dim)
-    mdg = pg.as_mdg(sd)
-    pg.convert_from_pp(mdg)
+def plot_trees():
+    mdg = pg.unit_grid(2, 1 / 5, as_mdg=True)
     mdg.compute_geometry()
 
-    # tree = pg.SpanningTree(mdg, "all_bdry")
-    # tree.visualize_2d(mdg, "tree.pdf", False, True, True)
+    tree = pg.SpanningTree(mdg, "all_bdry")
+    tree.visualize_2d(
+        mdg, "tree.pdf", draw_grid=False, draw_tree=True, draw_complement=True
+    )
+    tree.visualize_2d(
+        mdg, "cotree.pdf", draw_grid=True, draw_tree=True, draw_complement=False
+    )
 
-    f_0 = np.random.rand(sd.num_nodes)
-    f_1 = np.random.rand(sd.num_ridges)
-    f_2 = np.random.rand(sd.num_faces)
-    f_3 = np.random.rand(sd.num_cells)
 
-    f = [f_0, f_1, f_2, f_3]
-
-    if dim == 2:
-        f = f[1:]
-
-    poin = Poincare(mdg)
-
-    # test_properties(poin, f)
-    test_solver(poin, f)
+if __name__ == "__main__":
+    # test_Poincare_constants(2)
+    test_aux_precond()
+    # test_solver()
+    # test_properties(poin)
+    # plot_trees()
+#
