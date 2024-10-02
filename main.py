@@ -346,19 +346,19 @@ def test_aux_precond(dim=2, k=1):
     else:
         N_list = 2 ** np.arange(5)
 
-    if dim == 2 and N_list[-1] == 4:
-        calc_cond = False
-    elif dim == 3 and N_list[-1] == 7:
-        calc_cond = False
-    else:
-        calc_cond = True
-
     alpha_list = np.power(10.0, np.arange(-4, 1))
 
     cond_table = np.zeros((len(N_list), len(alpha_list) + 1))
     iter_table = np.zeros((len(N_list), len(alpha_list)), dtype=int)
 
     for N_i, N in enumerate(N_list):
+        if dim == 2 and N >= 2**7:
+            calc_cond = False
+        elif dim == 3 and N >= 2**4:
+            calc_cond = False
+        else:
+            calc_cond = True
+
         sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
         mdg = pg.as_mdg(sd)
 
