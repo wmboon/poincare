@@ -1,7 +1,7 @@
 import numpy as np
 import scipy.sparse as sps
+import time
 
-import porepy as pp
 import pygeon as pg
 from pygeon.numerics.differentials import exterior_derivative as diff
 from pygeon.numerics.linear_system import create_restriction
@@ -223,20 +223,21 @@ def generate_random_source(sd):
 
 
 def test_solver():
-    import time
+    # Check the four-step solver.
 
-    N, dim = 15, 3
+    N, dim = 16, 3
 
     sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
     mdg = pg.as_mdg(sd)
     pg.convert_from_pp(mdg)
     mdg.compute_geometry()
 
+    print("h = {:.2e}".format(np.mean(sd.cell_diameters())))
+
     f = generate_random_source(sd)
 
     poin = Poincare(mdg, False)
 
-    # Check the four-step solver.
     mdg = poin.mdg
 
     # assemble matrices
@@ -278,7 +279,8 @@ def test_solver():
         if k >= 2:
             w_v = solve_subproblem(poin, k - 2, MD[k - 2].T @ (f[k - 1] - v_b))
             v = v_b + D[k - 2] @ w_v
-        else:
+
+        else:  # k - 2 < 0
             print("ndof: 0, Time: -s")
             v = v_b - np.sum(M[0] @ v_b)
 
@@ -303,7 +305,6 @@ def test_Poincare_constants(dim=2):
         N_list = 2 ** np.arange(5)
 
     table = np.zeros((len(N_list), dim + 1))
-    table_ndof = np.zeros((len(N_list), dim), dtype=int)
 
     for N_i, N in enumerate(N_list):
         sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
@@ -322,25 +323,29 @@ def test_Poincare_constants(dim=2):
             M = R @ mass_matrix(mdg, dim - k, None) @ R.T
             S = R @ stiff_matrix(mdg, dim - k, None) @ R.T
 
-            if k == 0:
+            if k == 0:  # Remove the constants
                 proj = mass_matrix(mdg, dim - k, None)
                 proj /= np.sum(proj)
                 M_op = lambda v: M @ (v - np.ones(len(v) + 1) @ proj @ R.T @ v)
                 M2 = sps.linalg.LinearOperator(matvec=M_op, shape=M.shape)
-                labda_temp, _ = sps.linalg.eigsh(M2, 1, M=S, which="LM", tol=1e-3)
+                labda = sps.linalg.eigsh(
+                    M2, 1, M=S, which="LM", tol=1e-6, return_eigenvectors=False
+                )
 
             else:
-                labda_temp, _ = sps.linalg.eigsh(M, 1, M=S, which="LM", tol=1e-3)
+                labda = sps.linalg.eigsh(
+                    M, 1, M=S, which="LM", tol=1e-6, return_eigenvectors=False
+                )
 
-            table[N_i, k + 1] = np.sqrt(labda_temp[0])
-            table_ndof[N_i, k] = M.shape[0]
+            table[N_i, k + 1] = np.sqrt(labda[0])
 
-    np.set_printoptions(formatter={"float": "{: 0.2e}".format})
-    print(table)
-    # print(table_ndof)
+    with np.printoptions(formatter={"float": "{: 0.2e}".format}):
+        print(table)
 
 
 def test_aux_precond(dim=2, k=1):
+
+    print("n = {}, k = {}".format(dim, k))
     if dim == 2:
         N_list = 2 ** np.arange(3, 8)
     else:
@@ -402,19 +407,19 @@ def test_aux_precond(dim=2, k=1):
 
             P = sps.linalg.LinearOperator(matvec=precond, shape=A.shape)
 
-            v, _ = sps.linalg.minres(A, f[k], M=P, callback=nonlocal_iterate, rtol=1e-6)
+            v, _ = sps.linalg.minres(A, f[k], M=P, callback=nonlocal_iterate, rtol=1e-8)
             if calc_cond:
-                lambda_max = sps.linalg.eigsh(
+                lambda_max = sps.linalg.eigs(
                     precond(A), 1, which="LM", tol=1e-4, return_eigenvectors=False
                 )
-                lambda_min = sps.linalg.eigsh(
+                lambda_min = sps.linalg.eigs(
                     precond(A), 1, which="SM", tol=1e-4, return_eigenvectors=False
                 )
 
                 cond_table[N_i, alpha_i + 1] = np.abs(lambda_max[0] / lambda_min[0])
             iter_table[N_i, alpha_i] = iters
 
-    with np.printoptions(formatter={"float": "{: 0.2e}".format}):
+    with np.printoptions(formatter={"float": "{:1.2f}".format}):
         print(cond_table)
     print(iter_table)
 
@@ -453,9 +458,15 @@ def plot_trees():
 
 
 if __name__ == "__main__":
-    # test_Poincare_constants(2)
-    test_aux_precond()
-    # test_solver()
-    # test_properties(poin)
-    # plot_trees()
-#
+
+    print("Solving the Hodge-Laplace problem")
+    test_solver()
+
+    print("Computing the Poincaré constants")
+    for dim in [2, 3]:
+        test_Poincare_constants(dim)
+
+    print("Preconditioning the projection problem")
+    for dim in [2, 3]:
+        for k in range(1, dim):
+            test_aux_precond(dim, k)
