@@ -94,7 +94,7 @@ class Poincare:
         center = np.mean(sd.nodes, axis=1, keepdims=True)
         dists = np.linalg.norm(sd.nodes - center, axis=0)
 
-        return np.argmax(dists == np.min(dists))
+        return np.argmin(dists)
 
     def flag_nodes(self):
         """
@@ -405,8 +405,6 @@ def test_aux_precond(dim=2, k=1):
         print(cond_table)
     print(iter_table)
 
-    pass
-
 
 def test_properties():
     N, dim = 5, 3
@@ -432,10 +430,30 @@ def plot_trees():
 
     tree = pg.SpanningTree(mdg, "all_bdry")
     tree.visualize_2d(
-        mdg, "tree.pdf", draw_grid=False, draw_tree=True, draw_complement=True
+        mdg, "tree-cotree.pdf", draw_grid=False, draw_tree=True, draw_cotree=True
     )
     tree.visualize_2d(
-        mdg, "cotree.pdf", draw_grid=True, draw_tree=True, draw_complement=False
+        mdg, "grid-tree.pdf", draw_grid=True, draw_tree=True, draw_cotree=False
+    )
+
+
+def plot_trees_mdg():
+    import porepy as pp
+
+    mesh_args = {"cell_size": 0.25, "cell_size_fracture": 0.125}
+    mdg, _ = pp.mdg_library.square_with_orthogonal_fractures(
+        "simplex", mesh_args, [0, 1]
+    )
+    pg.convert_from_pp(mdg)
+
+    mdg.compute_geometry()
+
+    tree = pg.SpanningTree(mdg, "all_bdry")
+    tree.visualize_2d(
+        mdg, "mdg_cotree.pdf", draw_grid=True, draw_tree=True, draw_cotree=False
+    )
+    tree.visualize_2d(
+        mdg, "mdg_tree.pdf", draw_grid=False, draw_tree=True, draw_cotree=True
     )
 
 
