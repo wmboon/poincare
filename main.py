@@ -23,17 +23,6 @@ class Poincare:
         self.dim = mdg.dim_max()
         self.define_bar_spaces()
 
-    def euler_characteristic(self):
-        sd = self.mdg.subdomains()[0]
-
-        match self.dim:
-            case 1:
-                return sd.num_nodes - sd.num_cells
-            case 2:
-                return sd.num_nodes - sd.num_faces + sd.num_cells
-            case 3:
-                return sd.num_nodes - sd.num_ridges + sd.num_faces - sd.num_cells
-
     def define_bar_spaces(self):
         """
         Flag the mesh entities that will be used to generate the Poincaré operators
@@ -58,7 +47,8 @@ class Poincare:
 
     def flag_edges(self):
         """
-        Flag the edges of the grid that form a spanning tree of the nodes
+        Flag the edges of the grid that form a spanning tree of the nodes.
+        This function only gets called in 3D.
 
         Returns:
             np.ndarray: boolean array with flagged edges
@@ -89,6 +79,12 @@ class Poincare:
         return flagged_edges
 
     def find_central_node(self):
+        """
+        Find the node that is closest to the center of the domain.
+
+        Returns:
+            int: index of the central node
+        """
 
         sd = self.mdg.subdomains()[0]
         center = np.mean(sd.nodes, axis=1, keepdims=True)
@@ -110,7 +106,8 @@ class Poincare:
         return flagged_nodes
 
     def apply(self, k, f):
-        """Apply the Poincare operator
+        """
+        Apply the Poincare operator
 
         Args:
             k (int): order of the differential form
@@ -134,7 +131,7 @@ class Poincare:
 
     def apply_op(self, k, f):
         """
-        Create the Poincaré operator for k-forms
+        Apply the permitted Poincaré operator for k-forms
 
         Args:
             k (int): order of the form
@@ -153,7 +150,8 @@ class Poincare:
         return R_bar.T @ sps.linalg.spsolve(pi_0_d_bar, R_0 @ f)
 
     def decompose(self, k, f):
-        """use the Poincaré operators to decompose f = pd(f) + dp(f)
+        """
+        Use the Poincaré operators to decompose f = pd(f) + dp(f)
 
         Args:
             k (int): order of the k-form f
@@ -179,7 +177,6 @@ class Poincare:
         return pdf, dpf
 
     def check_chain_property(self, k, f):
-
         if k <= 0:
             ppf = 0
         else:
@@ -202,6 +199,24 @@ def generate_random_source(sd):
         f = f[1:]
 
     return f
+
+
+def test_properties():
+    N, dim = 5, 3
+    sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
+    mdg = pg.as_mdg(sd)
+    pg.convert_from_pp(mdg)
+    mdg.compute_geometry()
+
+    f = generate_random_source(sd)
+    poin = Poincare(mdg)
+
+    # Check the decomposition and chain property
+    for k, f_ in enumerate(f):
+        pdf, dpf = poin.decompose(k, f_)
+        assert np.allclose(f_, pdf + dpf)
+
+        poin.check_chain_property(k, f_)
 
 
 def test_solver():
@@ -406,34 +421,16 @@ def test_aux_precond(dim=2, k=1):
     print(iter_table)
 
 
-def test_properties():
-    N, dim = 5, 3
-    sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
-    mdg = pg.as_mdg(sd)
-    pg.convert_from_pp(mdg)
-    mdg.compute_geometry()
-
-    f = generate_random_source(sd)
-    poin = Poincare(mdg)
-
-    # Check the decomposition and chain property
-    for k, f_ in enumerate(f):
-        pdf, dpf = poin.decompose(k, f_)
-        assert np.allclose(f_, pdf + dpf)
-
-        poin.check_chain_property(k, f_)
-
-
 def plot_trees():
     mdg = pg.unit_grid(2, 1 / 5, as_mdg=True)
     mdg.compute_geometry()
 
-    tree = pg.SpanningTree(mdg, "all_bdry")
+    tree = pg.SpanningTree(mdg, "first_bdry")
     tree.visualize_2d(
-        mdg, "tree-cotree.pdf", draw_grid=False, draw_tree=True, draw_cotree=True
+        mdg, "first_cotree.pdf", draw_grid=True, draw_tree=True, draw_cotree=False
     )
     tree.visualize_2d(
-        mdg, "grid-tree.pdf", draw_grid=True, draw_tree=True, draw_cotree=False
+        mdg, "first_tree.pdf", draw_grid=False, draw_tree=True, draw_cotree=True
     )
 
 
@@ -458,8 +455,6 @@ def plot_trees_mdg():
 
 
 if __name__ == "__main__":
-    test_properties()
-else:
 
     print("Solving the Hodge-Laplace problem")
     test_solver()
