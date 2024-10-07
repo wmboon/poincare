@@ -10,7 +10,7 @@ from pygeon.numerics.stiffness import stiff_matrix
 
 
 class Poincare:
-    def __init__(self, mdg: pg.MixedDimensionalGrid, create_ops=True):
+    def __init__(self, mdg: pg.MixedDimensionalGrid):
         """
         Class for generating Poincaré operators p
         that satisfy pd + dp = I
@@ -22,9 +22,6 @@ class Poincare:
         self.mdg = mdg
         self.dim = mdg.dim_max()
         self.define_bar_spaces()
-
-        if create_ops:
-            self.create_operators()
 
     def euler_characteristic(self):
         sd = self.mdg.subdomains()[0]
@@ -112,51 +109,6 @@ class Poincare:
 
         return flagged_nodes
 
-    def create_operators(self):
-        """
-        Saves the poincare operators in self.op
-        """
-        # Preallocation
-        n = self.dim
-        self.op = [None] * (n + 1)
-
-        # Cells to faces, similar to the SpanningTree
-        if n > 1:
-            self.op[n] = self.create_op(n)
-
-        # Faces to edges (only for 3D)
-        if n > 2:
-            self.op[2] = self.create_op(2)
-
-        # Edges to nodes
-
-        op_nodal = self.create_op(1)
-        subtract_mean = lambda x: x - np.mean(x)
-        self.op[1] = lambda f: subtract_mean(op_nodal(f))
-
-        # Nodes to the constants
-        self.op[0] = lambda f: np.full_like(f, np.mean(f))
-
-    def create_op(self, k):
-        """
-        Create the Poincaré operator for k-forms
-
-        Args:
-            k (int): order of the form
-
-        Returns:
-            function: the Poincaré operator
-        """
-        n_minus_k = self.dim - k
-        _diff = diff(self.mdg, n_minus_k + 1)
-
-        R_0 = create_restriction(~self.bar_spaces[k])
-        R_bar = create_restriction(self.bar_spaces[k - 1])
-
-        pi_0_d_bar = R_0 @ _diff @ R_bar.T
-
-        return lambda f: R_bar.T @ sps.linalg.spsolve(pi_0_d_bar, R_0 @ f)
-
     def apply(self, k, f):
         """Apply the Poincare operator
 
@@ -167,8 +119,38 @@ class Poincare:
         Returns:
             np.ndarray: the image of the Poincaré operator under f
         """
+        # Nodes to the constants
+        if k == 0:
+            return np.full_like(f, np.mean(f))
 
-        return self.op[k](f)
+        # For k > 0, we simply apply the operator
+        pf = self.apply_op(k, f)
+
+        # For edges to nodes, we subtract the mean
+        if k == 1:
+            return pf - np.mean(pf)
+        else:  # Otherwise, we return pf
+            return pf
+
+    def apply_op(self, k, f):
+        """
+        Create the Poincaré operator for k-forms
+
+        Args:
+            k (int): order of the form
+
+        Returns:
+            np.ndarray: the image of the Poincaré operator
+        """
+        n_minus_k = self.dim - k
+        _diff = diff(self.mdg, n_minus_k + 1)
+
+        R_0 = create_restriction(~self.bar_spaces[k])
+        R_bar = create_restriction(self.bar_spaces[k - 1])
+
+        pi_0_d_bar = R_0 @ _diff @ R_bar.T
+
+        return R_bar.T @ sps.linalg.spsolve(pi_0_d_bar, R_0 @ f)
 
     def decompose(self, k, f):
         """use the Poincaré operators to decompose f = pd(f) + dp(f)
@@ -458,6 +440,8 @@ def plot_trees():
 
 
 if __name__ == "__main__":
+    test_properties()
+else:
 
     print("Solving the Hodge-Laplace problem")
     test_solver()
