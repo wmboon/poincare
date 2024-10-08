@@ -233,7 +233,7 @@ def test_solver():
 
     f = generate_random_source(sd)
 
-    poin = Poincare(mdg, False)
+    poin = Poincare(mdg)
 
     mdg = poin.mdg
 
@@ -404,7 +404,7 @@ def test_aux_precond(dim=2, k=1):
 
             P = sps.linalg.LinearOperator(matvec=precond, shape=A.shape)
 
-            v, _ = sps.linalg.minres(A, f[k], M=P, callback=nonlocal_iterate, rtol=1e-8)
+            sps.linalg.minres(A, f[k], M=P, callback=nonlocal_iterate, rtol=1e-8)
             if calc_cond:
                 lambda_max = sps.linalg.eigs(
                     precond(A), 1, which="LM", tol=1e-4, return_eigenvectors=False
