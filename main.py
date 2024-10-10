@@ -430,10 +430,20 @@ def plot_trees():
 
     tree = pg.SpanningTree(mdg, "all_bdry")
     tree.visualize_2d(
-        mdg, "tree-cotree.pdf", draw_grid=False, draw_tree=True, draw_cotree=True
+        mdg,
+        "tree.pdf",
+        draw_grid=False,
+        draw_tree=True,
+        draw_cotree=True,
+        start_color="blue",
     )
     tree.visualize_2d(
-        mdg, "grid-tree.pdf", draw_grid=True, draw_tree=True, draw_cotree=False
+        mdg,
+        "cotree.pdf",
+        draw_grid=True,
+        draw_tree=True,
+        draw_cotree=False,
+        start_color="blue",
     )
 
 
@@ -458,9 +468,8 @@ def plot_trees_mdg():
 
 
 if __name__ == "__main__":
-    test_properties()
+    plot_trees()
 else:
-
     print("Solving the Hodge-Laplace problem")
     test_solver()
 
