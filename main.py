@@ -237,11 +237,12 @@ def test_solver():
 
     mdg = poin.mdg
 
-    # assemble matrices
+    # Assemble mass and stiffness matrices
     M = [mass_matrix(mdg, dim - k, None) for k in range(dim + 1)]
-    S = [stiff_matrix(mdg, dim - k, None) for k in range(dim + 1)]
     D = [diff(mdg, dim - k) for k in range(dim)]
     MD = [M[k + 1] @ D[k] for k in range(dim)]
+    S = [D[k].T @ MD[k] for k in range(dim)]
+    S.append(stiff_matrix(mdg, 0, None))
 
     f[0] -= np.sum(M[0] @ f[0])
 
@@ -258,7 +259,7 @@ def test_solver():
 
         return LS.solve(solver=timed_solve)
 
-    for k in range(dim, 0, -1):
+    for k in range(1, dim + 1):
         print("k = {}".format(k))
 
         A = sps.bmat([[M[k - 1], -MD[k - 1].T], [MD[k - 1], S[k]]])
