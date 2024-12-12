@@ -21,7 +21,11 @@ class Poincare:
         """
         self.mdg = mdg
         self.dim = mdg.dim_max()
+        self.top_sd = mdg.subdomains(dim=self.dim)[0]
         self.define_bar_spaces()
+
+        if mdg.num_subdomains() > 1:
+            raise NotImplementedError
 
     def define_bar_spaces(self):
         """
@@ -40,12 +44,12 @@ class Poincare:
 
         # Edges in 3D
         if self.dim == 3:
-            self.bar_spaces[1] = self.flag_edges()
+            self.bar_spaces[1] = self.flag_edges_3d()
 
         # Nodes
         self.bar_spaces[0] = self.flag_nodes()
 
-    def flag_edges(self):
+    def flag_edges_3d(self):
         """
         Flag the edges of the grid that form a spanning tree of the nodes.
         This function only gets called in 3D.
@@ -86,21 +90,20 @@ class Poincare:
             int: index of the central node
         """
 
-        sd = self.mdg.subdomains()[0]
-        center = np.mean(sd.nodes, axis=1, keepdims=True)
-        dists = np.linalg.norm(sd.nodes - center, axis=0)
+        center = np.mean(self.top_sd.nodes, axis=1, keepdims=True)
+        dists = np.linalg.norm(self.top_sd.nodes - center, axis=0)
 
         return np.argmin(dists)
 
     def flag_nodes(self):
         """
-        Flag all the nodes except for the first one
+        Flag all the nodes in the top-dim domain, except for the first node
 
         Returns:
             np.ndarray: boolean array with flagged nodes
         """
-        num_nodes = self.mdg.subdomains()[0].num_nodes
-        flagged_nodes = np.ones(num_nodes, dtype=bool)
+
+        flagged_nodes = np.ones(self.top_sd.num_nodes, dtype=bool)
         flagged_nodes[0] = False
 
         return flagged_nodes
@@ -176,22 +179,25 @@ class Poincare:
 
         return pdf, dpf
 
-    def check_chain_property(self, k, f):
-        if k <= 0:
-            ppf = 0
-        else:
-            pf = self.apply(k, f)
-            ppf = self.apply(k - 1, pf)
 
-        assert np.allclose(ppf, 0)
+def check_chain_property(poin, k, f):
+    if k <= 0:
+        ppf = 0
+    else:
+        pf = poin.apply(k, f)
+        ppf = poin.apply(k - 1, pf)
+
+    assert np.allclose(ppf, 0)
 
 
-def generate_random_source(sd):
+def generate_random_source(mdg: pg.MixedDimensionalGrid):
+    sd = mdg.subdomains(dim=mdg.dim_max())[0]
+
     np.random.seed(0)
     f_0 = np.random.rand(sd.num_nodes)
-    f_1 = np.random.rand(sd.num_ridges)
-    f_2 = np.random.rand(sd.num_faces)
-    f_3 = np.random.rand(sd.num_cells)
+    f_1 = np.random.rand(mdg.num_subdomain_ridges())
+    f_2 = np.random.rand(mdg.num_subdomain_faces())
+    f_3 = np.random.rand(mdg.num_subdomain_cells())
 
     f = [f_0, f_1, f_2, f_3]
 
@@ -201,14 +207,12 @@ def generate_random_source(sd):
     return f
 
 
-def test_properties():
-    N, dim = 5, 3
-    sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
-    mdg = pg.as_mdg(sd)
+def test_properties(N=5, dim=3):
+    mdg = pg.unit_grid(dim, 1 / N)
     pg.convert_from_pp(mdg)
     mdg.compute_geometry()
 
-    f = generate_random_source(sd)
+    f = generate_random_source(mdg)
     poin = Poincare(mdg)
 
     # Check the decomposition and chain property
@@ -216,22 +220,20 @@ def test_properties():
         pdf, dpf = poin.decompose(k, f_)
         assert np.allclose(f_, pdf + dpf)
 
-        poin.check_chain_property(k, f_)
+        check_chain_property(poin, k, f_)
 
 
-def test_solver():
+def test_solver(N=10, dim=3):
+
     # Check the four-step solver.
-
-    N, dim = 16, 3
-
-    sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
-    mdg = pg.as_mdg(sd)
+    mdg = pg.unit_grid(dim, 1 / N)
     pg.convert_from_pp(mdg)
     mdg.compute_geometry()
 
+    sd = mdg.subdomains(dim=dim)[0]
     print("h = {:.2e}".format(np.mean(sd.cell_diameters())))
 
-    f = generate_random_source(sd)
+    f = generate_random_source(mdg)
 
     poin = Poincare(mdg)
 
@@ -297,23 +299,19 @@ def test_solver():
 
 
 def test_Poincare_constants(dim=2):
-    if dim == 2:
-        N_list = 2 ** np.arange(3, 8)
-    else:
-        N_list = 2 ** np.arange(5)
+    N_list = generate_N_list(dim)
 
     table = np.zeros((len(N_list), dim + 1))
 
     for N_i, N in enumerate(N_list):
-        sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
-        mdg = pg.as_mdg(sd)
+        mdg = pg.unit_grid(dim, 1 / N)
 
         pg.convert_from_pp(mdg)
         mdg.compute_geometry()
 
         poin = Poincare(mdg)
 
-        table[N_i, 0] = np.mean(sd.cell_diameters())
+        table[N_i, 0] = np.mean(poin.top_sd.cell_diameters())
 
         for k in range(dim):
 
@@ -344,10 +342,7 @@ def test_Poincare_constants(dim=2):
 def test_aux_precond(dim=2, k=1):
 
     print("n = {}, k = {}".format(dim, k))
-    if dim == 2:
-        N_list = 2 ** np.arange(3, 8)
-    else:
-        N_list = 2 ** np.arange(5)
+    N_list = generate_N_list(dim)
 
     alpha_list = np.power(10.0, np.arange(-4, 1))
 
@@ -372,7 +367,7 @@ def test_aux_precond(dim=2, k=1):
 
         cond_table[N_i, 0] = np.mean(sd.cell_diameters())
 
-        f = generate_random_source(sd)
+        f = generate_random_source(mdg)
 
         # assemble matrices
         M = [mass_matrix(mdg, dim - k, None) for k in range(dim + 1)]
@@ -420,6 +415,14 @@ def test_aux_precond(dim=2, k=1):
     with np.printoptions(formatter={"float": "{:1.2f}".format}):
         print(cond_table)
     print(iter_table)
+
+
+def generate_N_list(dim, n_grids=5):
+    if dim == 2:
+        N_list = 2 ** np.arange(3, 3 + n_grids)
+    else:
+        N_list = 2 ** np.arange(n_grids)
+    return N_list
 
 
 def plot_trees():
