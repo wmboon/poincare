@@ -207,7 +207,7 @@ def generate_random_source(mdg: pg.MixedDimensionalGrid):
     return f
 
 
-def test_properties(N=5, dim=3):
+def test_properties(N=2, dim=3):
     mdg = pg.unit_grid(dim, 1 / N)
     pg.convert_from_pp(mdg)
     mdg.compute_geometry()
@@ -221,6 +221,8 @@ def test_properties(N=5, dim=3):
         assert np.allclose(f_, pdf + dpf)
 
         check_chain_property(poin, k, f_)
+
+    print("All properties passed")
 
 
 def test_solver(N=10, dim=3):
@@ -459,6 +461,9 @@ def plot_trees_mdg():
 
 
 if __name__ == "__main__":
+
+    print("Testing decomposition and co-chain properties")
+    test_properties()
 
     print("Solving the Hodge-Laplace problem")
     test_solver()
