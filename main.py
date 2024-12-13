@@ -59,7 +59,7 @@ def test_properties(N=2, dim=3):
 
         check_chain_property(poin, k, f_)
 
-    print("All properties passed")
+    print("All properties passed, dim = {}".format(dim))
 
 
 def test_solver(N=10, dim=3):
@@ -292,7 +292,8 @@ def plot_trees_mdg():
 if __name__ == "__main__":
 
     print("Testing decomposition and co-chain properties")
-    test_properties()
+    for dim in [2, 3]:
+        test_properties(dim=dim)
 
     print("Solving the Hodge-Laplace problem")
     test_solver()
