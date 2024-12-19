@@ -262,10 +262,38 @@ def plot_trees():
 
     tree = pg.SpanningTree(mdg, "first_bdry")
     tree.visualize_2d(
-        mdg, "first_cotree.pdf", draw_grid=True, draw_tree=True, draw_cotree=False
+        mdg,
+        "first_cotree.pdf",
+        draw_grid=True,
+        draw_tree=True,
+        draw_cotree=False,
+        start_color="blue",
     )
     tree.visualize_2d(
-        mdg, "first_tree.pdf", draw_grid=False, draw_tree=True, draw_cotree=True
+        mdg,
+        "first_tree.pdf",
+        draw_grid=False,
+        draw_tree=True,
+        draw_cotree=True,
+        start_color="blue",
+    )
+
+    tree = pg.SpanningTree(mdg, "all_bdry")
+    tree.visualize_2d(
+        mdg,
+        "all_cotree.pdf",
+        draw_grid=True,
+        draw_tree=True,
+        draw_cotree=False,
+        start_color="blue",
+    )
+    tree.visualize_2d(
+        mdg,
+        "all_tree.pdf",
+        draw_grid=False,
+        draw_tree=True,
+        draw_cotree=True,
+        start_color="blue",
     )
 
 
