@@ -9,192 +9,14 @@ from pygeon.numerics.innerproducts import mass_matrix
 from pygeon.numerics.stiffness import stiff_matrix
 
 
-class Poincare:
-    def __init__(self, mdg: pg.MixedDimensionalGrid):
-        """
-        Class for generating Poincaré operators p
-        that satisfy pd + dp = I
-        with d the exterior derivative
+def generate_random_source(mdg: pg.MixedDimensionalGrid):
+    sd = mdg.subdomains(dim=mdg.dim_max())[0]
 
-        Args:
-            mdg (pg.MixedDimensionalGrid): a (mixed-dimensional) grid
-        """
-        self.mdg = mdg
-        self.dim = mdg.dim_max()
-        self.define_bar_spaces()
-
-    def euler_characteristic(self):
-        sd = self.mdg.subdomains()[0]
-
-        match self.dim:
-            case 1:
-                return sd.num_nodes - sd.num_cells
-            case 2:
-                return sd.num_nodes - sd.num_faces + sd.num_cells
-            case 3:
-                return sd.num_nodes - sd.num_ridges + sd.num_faces - sd.num_cells
-
-    def define_bar_spaces(self):
-        """
-        Flag the mesh entities that will be used to generate the Poincaré operators
-        """
-        # Preallocation
-        self.bar_spaces = [None] * (self.dim + 1)
-
-        # Cells
-        self.bar_spaces[self.dim] = np.zeros(self.mdg.num_subdomain_cells(), dtype=bool)
-
-        # Faces
-        self.bar_spaces[self.dim - 1] = pg.SpanningTree(
-            self.mdg, "all_bdry"
-        ).flagged_faces
-
-        # Edges in 3D
-        if self.dim == 3:
-            self.bar_spaces[1] = self.flag_edges()
-
-        # Nodes
-        self.bar_spaces[0] = self.flag_nodes()
-
-    def flag_edges(self):
-        """
-        Flag the edges of the grid that form a spanning tree of the nodes
-
-        Returns:
-            np.ndarray: boolean array with flagged edges
-        """
-
-        grad = pg.grad(self.mdg)
-        incidence = grad.T @ grad
-
-        root = self.find_central_node()
-
-        tree = sps.csgraph.breadth_first_tree(incidence, root, directed=False)
-        c_start, c_end, _ = sps.find(tree)
-
-        rows = np.hstack((c_start, c_end))
-        cols = np.hstack([np.arange(c_start.size)] * 2)
-        vals = np.ones_like(rows)
-
-        edge_finder = sps.csc_array(
-            (vals, (rows, cols)), shape=(grad.shape[1], tree.nnz)
-        )
-        edge_finder = np.abs(grad) @ edge_finder
-        I, _, V = sps.find(edge_finder)
-        tree_edges = I[V == 2]
-
-        flagged_edges = np.ones(grad.shape[0], dtype=bool)
-        flagged_edges[tree_edges] = False
-
-        return flagged_edges
-
-    def find_central_node(self):
-
-        sd = self.mdg.subdomains()[0]
-        center = np.mean(sd.nodes, axis=1, keepdims=True)
-        dists = np.linalg.norm(sd.nodes - center, axis=0)
-
-        return np.argmin(dists)
-
-    def flag_nodes(self):
-        """
-        Flag all the nodes except for the first one
-
-        Returns:
-            np.ndarray: boolean array with flagged nodes
-        """
-        num_nodes = self.mdg.subdomains()[0].num_nodes
-        flagged_nodes = np.ones(num_nodes, dtype=bool)
-        flagged_nodes[0] = False
-
-        return flagged_nodes
-
-    def apply(self, k, f):
-        """Apply the Poincare operator
-
-        Args:
-            k (int): order of the differential form
-            f (np.ndarray): the differential form
-
-        Returns:
-            np.ndarray: the image of the Poincaré operator under f
-        """
-        # Nodes to the constants
-        if k == 0:
-            return np.full_like(f, np.mean(f))
-
-        # For k > 0, we simply apply the operator
-        pf = self.apply_op(k, f)
-
-        # For edges to nodes, we subtract the mean
-        if k == 1:
-            return pf - np.mean(pf)
-        else:  # Otherwise, we return pf
-            return pf
-
-    def apply_op(self, k, f):
-        """
-        Create the Poincaré operator for k-forms
-
-        Args:
-            k (int): order of the form
-
-        Returns:
-            np.ndarray: the image of the Poincaré operator
-        """
-        n_minus_k = self.dim - k
-        _diff = diff(self.mdg, n_minus_k + 1)
-
-        R_0 = create_restriction(~self.bar_spaces[k])
-        R_bar = create_restriction(self.bar_spaces[k - 1])
-
-        pi_0_d_bar = R_0 @ _diff @ R_bar.T
-
-        return R_bar.T @ sps.linalg.spsolve(pi_0_d_bar, R_0 @ f)
-
-    def decompose(self, k, f):
-        """use the Poincaré operators to decompose f = pd(f) + dp(f)
-
-        Args:
-            k (int): order of the k-form f
-            f (np.ndarray): the function to be decomposed
-
-        Returns:
-            tuple(np.ndarray): the decomposition of f as (dp(f), pd(f))
-        """
-        n_minus_k = self.dim - k
-
-        if k == self.dim:  # then df = 0
-            pdf = np.zeros_like(f)
-        else:
-            df = diff(self.mdg, n_minus_k) @ f
-            pdf = self.apply(k + 1, df)
-
-        if k == 0:  # then dpf = mean(f)
-            dpf = self.apply(k, f)
-        else:
-            pf = self.apply(k, f)
-            dpf = diff(self.mdg, n_minus_k + 1) @ pf
-
-        return pdf, dpf
-
-    def check_chain_property(self, k, f):
-
-        if k <= 0:
-            ppf = 0
-        else:
-            pf = self.apply(k, f)
-            ppf = self.apply(k - 1, pf)
-
-        assert np.allclose(ppf, 0)
-
-
-def generate_random_source(sd):
     np.random.seed(0)
     f_0 = np.random.rand(sd.num_nodes)
-    f_1 = np.random.rand(sd.num_ridges)
-    f_2 = np.random.rand(sd.num_faces)
-    f_3 = np.random.rand(sd.num_cells)
+    f_1 = np.random.rand(mdg.num_subdomain_ridges())
+    f_2 = np.random.rand(mdg.num_subdomain_faces())
+    f_3 = np.random.rand(mdg.num_subdomain_cells())
 
     f = [f_0, f_1, f_2, f_3]
 
@@ -204,29 +26,64 @@ def generate_random_source(sd):
     return f
 
 
-def test_solver():
-    # Check the four-step solver.
+def generate_N_list(dim, n_grids=5):
+    if dim == 2:
+        N_list = 2 ** np.arange(3, 3 + n_grids)
+    else:
+        N_list = 2 ** np.arange(n_grids)
+    return N_list
 
-    N, dim = 16, 3
 
-    sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
-    mdg = pg.as_mdg(sd)
+def check_chain_property(poin, k, f):
+    if k <= 0:
+        ppf = 0
+    else:
+        pf = poin.apply(k, f)
+        ppf = poin.apply(k - 1, pf)
+
+    assert np.allclose(ppf, 0)
+
+
+def test_properties(N=2, dim=3):
+    mdg = pg.unit_grid(dim, 1 / N)
     pg.convert_from_pp(mdg)
     mdg.compute_geometry()
 
+    f = generate_random_source(mdg)
+    poin = pg.Poincare(mdg)
+
+    # Check the decomposition and chain property
+    for k, f_ in enumerate(f):
+        pdf, dpf = poin.decompose(k, f_)
+        assert np.allclose(f_, pdf + dpf)
+
+        check_chain_property(poin, k, f_)
+
+    print("All properties passed, dim = {}".format(dim))
+
+
+def test_solver(N=10, dim=3):
+
+    # Check the four-step solver.
+    mdg = pg.unit_grid(dim, 1 / N)
+    pg.convert_from_pp(mdg)
+    mdg.compute_geometry()
+
+    sd = mdg.subdomains(dim=dim)[0]
     print("h = {:.2e}".format(np.mean(sd.cell_diameters())))
 
-    f = generate_random_source(sd)
+    f = generate_random_source(mdg)
 
-    poin = Poincare(mdg, False)
+    poin = pg.Poincare(mdg)
 
     mdg = poin.mdg
 
-    # assemble matrices
+    # Assemble mass and stiffness matrices
     M = [mass_matrix(mdg, dim - k, None) for k in range(dim + 1)]
-    S = [stiff_matrix(mdg, dim - k, None) for k in range(dim + 1)]
     D = [diff(mdg, dim - k) for k in range(dim)]
     MD = [M[k + 1] @ D[k] for k in range(dim)]
+    S = [D[k].T @ MD[k] for k in range(dim)]
+    S.append(stiff_matrix(mdg, 0, None))
 
     f[0] -= np.sum(M[0] @ f[0])
 
@@ -243,7 +100,7 @@ def test_solver():
 
         return LS.solve(solver=timed_solve)
 
-    for k in range(dim, 0, -1):
+    for k in range(1, dim + 1):
         print("k = {}".format(k))
 
         A = sps.bmat([[M[k - 1], -MD[k - 1].T], [MD[k - 1], S[k]]])
@@ -281,23 +138,19 @@ def test_solver():
 
 
 def test_Poincare_constants(dim=2):
-    if dim == 2:
-        N_list = 2 ** np.arange(3, 8)
-    else:
-        N_list = 2 ** np.arange(5)
+    N_list = generate_N_list(dim)
 
     table = np.zeros((len(N_list), dim + 1))
 
     for N_i, N in enumerate(N_list):
-        sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
-        mdg = pg.as_mdg(sd)
+        mdg = pg.unit_grid(dim, 1 / N)
 
         pg.convert_from_pp(mdg)
         mdg.compute_geometry()
 
-        poin = Poincare(mdg)
+        poin = pg.Poincare(mdg)
 
-        table[N_i, 0] = np.mean(sd.cell_diameters())
+        table[N_i, 0] = np.mean(poin.top_sd.cell_diameters())
 
         for k in range(dim):
 
@@ -328,10 +181,7 @@ def test_Poincare_constants(dim=2):
 def test_aux_precond(dim=2, k=1):
 
     print("n = {}, k = {}".format(dim, k))
-    if dim == 2:
-        N_list = 2 ** np.arange(3, 8)
-    else:
-        N_list = 2 ** np.arange(5)
+    N_list = generate_N_list(dim)
 
     alpha_list = np.power(10.0, np.arange(-4, 1))
 
@@ -352,11 +202,11 @@ def test_aux_precond(dim=2, k=1):
         pg.convert_from_pp(mdg)
         mdg.compute_geometry()
 
-        poin = Poincare(mdg)
+        poin = pg.Poincare(mdg)
 
         cond_table[N_i, 0] = np.mean(sd.cell_diameters())
 
-        f = generate_random_source(sd)
+        f = generate_random_source(mdg)
 
         # assemble matrices
         M = [mass_matrix(mdg, dim - k, None) for k in range(dim + 1)]
@@ -389,7 +239,7 @@ def test_aux_precond(dim=2, k=1):
 
             P = sps.linalg.LinearOperator(matvec=precond, shape=A.shape)
 
-            v, _ = sps.linalg.minres(A, f[k], M=P, callback=nonlocal_iterate, rtol=1e-8)
+            sps.linalg.minres(A, f[k], M=P, callback=nonlocal_iterate, rtol=1e-8)
             if calc_cond:
                 lambda_max = sps.linalg.eigs(
                     precond(A), 1, which="LM", tol=1e-4, return_eigenvectors=False
@@ -406,43 +256,43 @@ def test_aux_precond(dim=2, k=1):
     print(iter_table)
 
 
-def test_properties():
-    N, dim = 5, 3
-    sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
-    mdg = pg.as_mdg(sd)
-    pg.convert_from_pp(mdg)
-    mdg.compute_geometry()
-
-    f = generate_random_source(sd)
-    poin = Poincare(mdg)
-
-    # Check the decomposition and chain property
-    for k, f_ in enumerate(f):
-        pdf, dpf = poin.decompose(k, f_)
-        assert np.allclose(f_, pdf + dpf)
-
-        poin.check_chain_property(k, f_)
-
-
 def plot_trees():
     mdg = pg.unit_grid(2, 1 / 5, as_mdg=True)
     mdg.compute_geometry()
 
-    tree = pg.SpanningTree(mdg, "all_bdry")
+    tree = pg.SpanningTree(mdg, "first_bdry")
     tree.visualize_2d(
         mdg,
-        "tree.pdf",
+        "first_cotree.pdf",
+        draw_grid=True,
+        draw_tree=True,
+        draw_cotree=False,
+        start_color="blue",
+    )
+    tree.visualize_2d(
+        mdg,
+        "first_tree.pdf",
         draw_grid=False,
         draw_tree=True,
         draw_cotree=True,
         start_color="blue",
     )
+
+    tree = pg.SpanningTree(mdg, "all_bdry")
     tree.visualize_2d(
         mdg,
-        "cotree.pdf",
+        "all_cotree.pdf",
         draw_grid=True,
         draw_tree=True,
         draw_cotree=False,
+        start_color="blue",
+    )
+    tree.visualize_2d(
+        mdg,
+        "all_tree.pdf",
+        draw_grid=False,
+        draw_tree=True,
+        draw_cotree=True,
         start_color="blue",
     )
 
@@ -468,8 +318,11 @@ def plot_trees_mdg():
 
 
 if __name__ == "__main__":
-    plot_trees()
-else:
+
+    print("Testing decomposition and co-chain properties")
+    for dim in [2, 3]:
+        test_properties(dim=dim)
+
     print("Solving the Hodge-Laplace problem")
     test_solver()
 
