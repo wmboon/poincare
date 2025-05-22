@@ -33,7 +33,7 @@ def generate_random_source(mdg: pg.MixedDimensionalGrid):
     return f
 
 
-def generate_N_list(dim, n_grids=3):
+def generate_N_list(dim, n_grids=5):
     if dim == 2:
         N_list = 2 ** np.arange(3, 3 + n_grids)
     else:
@@ -59,7 +59,7 @@ def test_properties_cube(N=2, dim=3):
     test_properties(mdg)
 
 
-def test_properties_mdg(N=10):
+def test_properties_mdg(N=15):
     mesh_kwargs = {"mesh_size_frac": 1 / N, "mesh_size_min": 1 / (2 * N)}
     mdg = mdg_setup.fracture_grid(mesh_kwargs)
 
@@ -94,8 +94,8 @@ def test_properties(mdg):
 
     # Check the decomposition and chain property
     for k, f_ in enumerate(f):
-        pdf, dpf = poin.decompose(k, f_)
-        assert np.allclose(f_, pdf + dpf)
+        pdf, dpf, qf = poin.decompose(k, f_, True)
+        assert np.allclose(f_, pdf + dpf + qf)
 
         check_chain_property(poin, k, f_)
 
@@ -373,7 +373,7 @@ def plot_trees():
     tree = pg.SpanningTree(mdg, "first_bdry")
     tree.visualize_2d(
         mdg,
-        "first_cotree.pdf",
+        "first_cotree.svg",
         draw_grid=True,
         draw_tree=True,
         draw_cotree=False,
@@ -381,7 +381,7 @@ def plot_trees():
     )
     tree.visualize_2d(
         mdg,
-        "first_tree.pdf",
+        "first_tree.svg",
         draw_grid=False,
         draw_tree=True,
         draw_cotree=True,
@@ -391,7 +391,7 @@ def plot_trees():
     tree = pg.SpanningTree(mdg, "all_bdry")
     tree.visualize_2d(
         mdg,
-        "all_cotree.pdf",
+        "all_cotree.svg",
         draw_grid=True,
         draw_tree=True,
         draw_cotree=False,
@@ -399,7 +399,7 @@ def plot_trees():
     )
     tree.visualize_2d(
         mdg,
-        "all_tree.pdf",
+        "all_tree.svg",
         draw_grid=False,
         draw_tree=True,
         draw_cotree=True,
@@ -468,7 +468,7 @@ def plot_trees_mdg():
 
     tree.visualize_2d(
         mdg,
-        "mdg_grid.pdf",
+        "mdg_grid.svg",
         draw_grid=True,
         draw_tree=False,
         draw_cotree=False,
@@ -476,7 +476,7 @@ def plot_trees_mdg():
 
     tree.visualize_2d(
         mdg,
-        "mdg_cotree.pdf",
+        "mdg_cotree.svg",
         draw_grid=True,
         draw_tree=True,
         draw_cotree=False,
@@ -484,7 +484,57 @@ def plot_trees_mdg():
     )
     tree.visualize_2d(
         mdg,
-        "mdg_tree.pdf",
+        "mdg_tree.svg",
+        draw_grid=False,
+        draw_tree=True,
+        draw_cotree=True,
+        start_color="blue",
+    )
+
+
+def test_properties_holes_2D():
+    mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
+        "/home/AD.NORCERESEARCH.NO/wibo/pygeon/two_holes_2D.geo", 2
+    )
+
+    pg.convert_from_pp(mdg)
+    mdg.compute_geometry()
+
+    test_properties(mdg)
+
+
+def test_properties_holes_3D():
+    mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
+        "/home/AD.NORCERESEARCH.NO/wibo/pygeon/two_holes_3D.geo", 3
+    )
+
+    pg.convert_from_pp(mdg)
+    mdg.compute_geometry()
+
+    test_properties(mdg)
+
+
+def visualize_tree_with_holes():
+    mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
+        "/home/AD.NORCERESEARCH.NO/wibo/pygeon/two_holes_2D.geo", 2
+    )
+
+    pg.convert_from_pp(mdg)
+    mdg.compute_geometry()
+
+    tree = pg.SpanningTree(mdg, "all_bdry")
+
+    tree.visualize_2d(
+        mdg,
+        "holes_cotree.svg",
+        draw_grid=True,
+        draw_tree=True,
+        draw_cotree=False,
+        start_color="blue",
+    )
+    tree.visualize_2d(
+        mdg,
+        "holes_trees.svg",
         draw_grid=False,
         draw_tree=True,
         draw_cotree=True,
@@ -493,14 +543,16 @@ def plot_trees_mdg():
 
 
 if __name__ == "__main__":
-    test_properties_mdg()
-    # test_properties_seven()
+    # grid_with_holes()
+    plot_trees_mdg()
+    test_properties_mdg(5)
+    test_properties_seven()
     # print("Testing decomposition and co-chain properties")
     # for dim in [2, 3]:
     #     test_properties_cube(dim=dim)
 
     # print("Solving the Hodge-Laplace problem")
-    # test_solver_cube(8)
+    # test_solver_cube(16)
 
     # print("Computing the Poincaré constants")
     # for dim in [2, 3]:
