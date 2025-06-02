@@ -25,10 +25,7 @@ def generate_random_source(mdg: pg.MixedDimensionalGrid):
     f_2 = np.random.rand(mdg.num_subdomain_faces())
     f_3 = np.random.rand(mdg.num_subdomain_cells())
 
-    f = [f_0, f_1, f_2, f_3]
-
-    if sd.dim == 2:
-        f = f[1:]
+    f = [f_0, f_1, f_2, f_3][3 - sd.dim :]
 
     return f
 
@@ -70,8 +67,6 @@ def test_properties_mdg(N=15):
     test_properties(mdg)
     test_solver(mdg)
 
-    pass
-
 
 def test_properties_seven(N=1):
     mesh_kwargs = {"cell_size": 1 / N, "cell_size_fracture": 1 / N}
@@ -100,6 +95,8 @@ def test_properties(mdg):
         check_chain_property(poin, k, f_)
 
     print("All properties passed, dim = {}".format(mdg.dim_max()))
+
+    new_basis = poin.orthogonalize_cohomology_basis(1)
 
 
 def get_tips(mdg):
@@ -502,6 +499,8 @@ def test_properties_holes_2D():
 
     test_properties(mdg)
 
+    # test_solver(mdg)
+
 
 def test_properties_holes_3D():
     mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
@@ -512,6 +511,7 @@ def test_properties_holes_3D():
     mdg.compute_geometry()
 
     test_properties(mdg)
+    # test_solver(mdg)
 
 
 def visualize_tree_with_holes():
@@ -543,16 +543,17 @@ def visualize_tree_with_holes():
 
 
 if __name__ == "__main__":
-    # grid_with_holes()
-    plot_trees_mdg()
-    test_properties_mdg(5)
-    test_properties_seven()
-    # print("Testing decomposition and co-chain properties")
-    # for dim in [2, 3]:
-    #     test_properties_cube(dim=dim)
+    # plot_trees_mdg()
+    test_properties_holes_2D()
+    test_properties_holes_3D()
+    # test_properties_mdg(5)
+    # test_properties_seven()
+    print("Testing decomposition and co-chain properties")
+    for dim in [2, 3]:
+        test_properties_cube(dim=dim)
 
-    # print("Solving the Hodge-Laplace problem")
-    # test_solver_cube(16)
+    print("Solving the Hodge-Laplace problem")
+    test_solver_cube(5)
 
     # print("Computing the Poincaré constants")
     # for dim in [2, 3]:

@@ -1,3 +1,10 @@
 .vscode/*
 *.pdf
 gmsh_frac_file*
+*.vtu
+*.svg
+*.pvd
+*.pvsm
+*.msh
+*.pyc
+
