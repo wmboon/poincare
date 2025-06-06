@@ -96,8 +96,6 @@ def test_properties(mdg):
 
     print("All properties passed, dim = {}".format(mdg.dim_max()))
 
-    new_basis = poin.orthogonalize_cohomology_basis(1)
-
 
 def get_tips(mdg):
     tip_ridges = np.concatenate([sd.tags["tip_ridges"] for sd in mdg.subdomains()])
@@ -170,7 +168,7 @@ def test_solver(mdg: pg.MixedDimensionalGrid):
             )
             v = v_b + D[k - 2] @ w_v
 
-        else:  # k - 2 < 0
+        else:  # k = 1, so v is a 0-form
             print("ndof: 0, Time: -s")
             v = v_b - np.sum(M[0] @ v_b) / np.sum(M[0])
 
@@ -370,7 +368,7 @@ def plot_trees():
     tree = pg.SpanningTree(mdg, "first_bdry")
     tree.visualize_2d(
         mdg,
-        "first_cotree.svg",
+        "figures/first_cotree.svg",
         draw_grid=True,
         draw_tree=True,
         draw_cotree=False,
@@ -378,7 +376,7 @@ def plot_trees():
     )
     tree.visualize_2d(
         mdg,
-        "first_tree.svg",
+        "figures/first_tree.svg",
         draw_grid=False,
         draw_tree=True,
         draw_cotree=True,
@@ -388,7 +386,7 @@ def plot_trees():
     tree = pg.SpanningTree(mdg, "all_bdry")
     tree.visualize_2d(
         mdg,
-        "all_cotree.svg",
+        "figures/all_cotree.svg",
         draw_grid=True,
         draw_tree=True,
         draw_cotree=False,
@@ -396,7 +394,7 @@ def plot_trees():
     )
     tree.visualize_2d(
         mdg,
-        "all_tree.svg",
+        "figures/all_tree.svg",
         draw_grid=False,
         draw_tree=True,
         draw_cotree=True,
@@ -465,7 +463,7 @@ def plot_trees_mdg():
 
     tree.visualize_2d(
         mdg,
-        "mdg_grid.svg",
+        "figures/mdg_grid.svg",
         draw_grid=True,
         draw_tree=False,
         draw_cotree=False,
@@ -473,7 +471,7 @@ def plot_trees_mdg():
 
     tree.visualize_2d(
         mdg,
-        "mdg_cotree.svg",
+        "figures/mdg_cotree.svg",
         draw_grid=True,
         draw_tree=True,
         draw_cotree=False,
@@ -481,7 +479,7 @@ def plot_trees_mdg():
     )
     tree.visualize_2d(
         mdg,
-        "mdg_tree.svg",
+        "figures/mdg_tree.svg",
         draw_grid=False,
         draw_tree=True,
         draw_cotree=True,
@@ -491,7 +489,20 @@ def plot_trees_mdg():
 
 def test_properties_holes_2D():
     mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
-        "/home/AD.NORCERESEARCH.NO/wibo/pygeon/two_holes_2D.geo", 2
+        "/home/AD.NORCERESEARCH.NO/wibo/projects/poincare/geo_files/two_holes_2D.geo", 2
+    )
+
+    pg.convert_from_pp(mdg)
+    mdg.compute_geometry()
+
+    test_properties(mdg)
+
+    # test_solver(mdg)
+
+
+def test_properties_one_hole_2D():
+    mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
+        "/home/AD.NORCERESEARCH.NO/wibo/projects/poincare/geo_files/one_hole_2D.geo", 2
     )
 
     pg.convert_from_pp(mdg)
@@ -504,7 +515,10 @@ def test_properties_holes_2D():
 
 def test_properties_holes_3D():
     mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
-        "/home/AD.NORCERESEARCH.NO/wibo/pygeon/two_holes_3D.geo", 3
+        "/home/AD.NORCERESEARCH.NO/wibo/projects/poincare/geo_files/missing_donut.geo",
+        # "/home/AD.NORCERESEARCH.NO/wibo/projects/poincare/geo_files/one_hole_3D.geo",
+        3,
+        # "/home/AD.NORCERESEARCH.NO/wibo/projects/poincare/geo_files/two_holes_3D.geo", 3
     )
 
     pg.convert_from_pp(mdg)
@@ -514,9 +528,11 @@ def test_properties_holes_3D():
     # test_solver(mdg)
 
 
-def visualize_tree_with_holes():
+def plot_tree_with_holes():
     mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
-        "/home/AD.NORCERESEARCH.NO/wibo/pygeon/two_holes_2D.geo", 2
+        "/home/AD.NORCERESEARCH.NO/wibo/projects/poincare/geo_files/one_hole_2D.geo",
+        2,
+        # "/home/AD.NORCERESEARCH.NO/wibo/projects/poincare/geo_files/two_holes_2D.geo", 2
     )
 
     pg.convert_from_pp(mdg)
@@ -526,7 +542,7 @@ def visualize_tree_with_holes():
 
     tree.visualize_2d(
         mdg,
-        "holes_cotree.svg",
+        "figures/holes_cotree.svg",
         draw_grid=True,
         draw_tree=True,
         draw_cotree=False,
@@ -534,7 +550,7 @@ def visualize_tree_with_holes():
     )
     tree.visualize_2d(
         mdg,
-        "holes_trees.svg",
+        "figures/holes_trees.svg",
         draw_grid=False,
         draw_tree=True,
         draw_cotree=True,
@@ -543,17 +559,19 @@ def visualize_tree_with_holes():
 
 
 if __name__ == "__main__":
+    plot_tree_with_holes()
     # plot_trees_mdg()
-    test_properties_holes_2D()
-    test_properties_holes_3D()
+    # test_properties_holes_2D()
+    # test_properties_one_hole_2D()
+    # test_properties_holes_3D()
     # test_properties_mdg(5)
     # test_properties_seven()
-    print("Testing decomposition and co-chain properties")
-    for dim in [2, 3]:
-        test_properties_cube(dim=dim)
+    # print("Testing decomposition and co-chain properties")
+    # for dim in [2, 3]:
+    #     test_properties_cube(dim=dim)
 
-    print("Solving the Hodge-Laplace problem")
-    test_solver_cube(5)
+    #     print("Solving the Hodge-Laplace problem")
+    #     test_solver_cube(5, dim=dim)
 
     # print("Computing the Poincaré constants")
     # for dim in [2, 3]:
