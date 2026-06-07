@@ -1,10 +1,12 @@
 import os
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import porepy as pp
-import pyamg
+
+# import pyamg
 import pygeon as pg
 import scipy.sparse as sps
 from pygeon.numerics.differentials import exterior_derivative as diff
@@ -12,7 +14,7 @@ from pygeon.numerics.innerproducts import mass_matrix
 from pygeon.numerics.linear_system import create_restriction
 from pygeon.numerics.stiffness import stiff_matrix
 
-sys.path.append(os.path.dirname(__file__))
+dirname = os.path.dirname(__file__)
 import mdg_setup
 
 
@@ -489,7 +491,7 @@ def plot_trees_mdg():
 
 def test_properties_holes_2D():
     mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
-        "/home/AD.NORCERESEARCH.NO/wibo/projects/poincare/geo_files/two_holes_2D.geo", 2
+        os.path.join(dirname, "/geo_files/two_holes_2D.geo"), 2
     )
 
     pg.convert_from_pp(mdg)
@@ -502,7 +504,7 @@ def test_properties_holes_2D():
 
 def test_properties_one_hole_2D():
     mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
-        "/home/AD.NORCERESEARCH.NO/wibo/projects/poincare/geo_files/one_hole_2D.geo", 2
+        Path(dirname + "/geo_files/one_hole_2D.geo"), 2
     )
 
     pg.convert_from_pp(mdg)
@@ -515,10 +517,10 @@ def test_properties_one_hole_2D():
 
 def test_properties_holes_3D():
     mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
-        "/home/AD.NORCERESEARCH.NO/wibo/projects/poincare/geo_files/missing_donut.geo",
-        # "/home/AD.NORCERESEARCH.NO/wibo/projects/poincare/geo_files/one_hole_3D.geo",
+        dirname + "/geo_files/missing_donut.geo",
+        # dirname + "/geo_files/one_hole_3D.geo",
         3,
-        # "/home/AD.NORCERESEARCH.NO/wibo/projects/poincare/geo_files/two_holes_3D.geo", 3
+        # dirname + "/geo_files/two_holes_3D.geo", 3
     )
 
     pg.convert_from_pp(mdg)
@@ -530,9 +532,9 @@ def test_properties_holes_3D():
 
 def plot_tree_with_holes():
     mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
-        "/home/AD.NORCERESEARCH.NO/wibo/projects/poincare/geo_files/one_hole_2D.geo",
+        dirname + "/geo_files/one_hole_2D.geo",
         2,
-        # "/home/AD.NORCERESEARCH.NO/wibo/projects/poincare/geo_files/two_holes_2D.geo", 2
+        # dirname + "/geo_files/two_holes_2D.geo", 2
     )
 
     pg.convert_from_pp(mdg)
@@ -559,10 +561,10 @@ def plot_tree_with_holes():
 
 
 if __name__ == "__main__":
-    plot_tree_with_holes()
+    # plot_tree_with_holes()
     # plot_trees_mdg()
     # test_properties_holes_2D()
-    # test_properties_one_hole_2D()
+    test_properties_one_hole_2D()
     # test_properties_holes_3D()
     # test_properties_mdg(5)
     # test_properties_seven()

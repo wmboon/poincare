@@ -34,7 +34,7 @@ Curve Loop(2) = {14, -10, 9, 11};
 
 Plane Surface(1) = {1, 2};
 //+
-Physical Surface(19) = {1};
+Physical Surface("2", 19) = {1};
 
 Physical Curve("1", 20) = {16, 1};
 //+
