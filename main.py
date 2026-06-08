@@ -1,5 +1,4 @@
 import os
-import sys
 import time
 from pathlib import Path
 
@@ -14,8 +13,9 @@ from pygeon.numerics.innerproducts import mass_matrix
 from pygeon.numerics.linear_system import create_restriction
 from pygeon.numerics.stiffness import stiff_matrix
 
-dirname = os.path.dirname(__file__)
 import mdg_setup
+
+dirname = os.path.dirname(__file__)
 
 
 def generate_random_source(mdg: pg.MixedDimensionalGrid):
@@ -91,12 +91,30 @@ def test_properties(mdg):
 
     # Check the decomposition and chain property
     for k, f_ in enumerate(f):
-        pdf, dpf, qf = poin.decompose(k, f_, True)
+        pdf, dpf, qf = poin.decompose(k, f_)
         assert np.allclose(f_, pdf + dpf + qf)
 
         check_chain_property(poin, k, f_)
 
     print("All properties passed, dim = {}".format(mdg.dim_max()))
+
+
+def visualize_cohomology(mdg, k):
+    poin = pg.Poincare(mdg)
+
+    A = poin.orthogonalize_cohomology_basis(k)
+
+    space = pg.RT0() if poin.dim == 2 else pg.Nedelec0()
+    eval = space.eval_at_cell_centers(poin.top_sd)
+    data_list = []
+    for i, col in enumerate(A.T):
+        cell_u = (eval @ col).reshape((3, -1))
+        data_list.append((f"cohom_{i}", cell_u))
+
+    exporter = pp.Exporter(mdg, "cohomology")
+    exporter.write_vtu(data_list)
+
+    pass
 
 
 def get_tips(mdg):
@@ -354,6 +372,8 @@ def compute_AMG_solver(A, bar_space):
     A_red.indices = A_red.indices.astype(np.int32)
     A_red.indptr = A_red.indptr.astype(np.int32)
 
+    import pyamg
+
     AMG = pyamg.smoothed_aggregation_solver(A_red)
     AMG = AMG.aspreconditioner()
 
@@ -491,7 +511,7 @@ def plot_trees_mdg():
 
 def test_properties_holes_2D():
     mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
-        os.path.join(dirname, "/geo_files/two_holes_2D.geo"), 2
+        Path(dirname + "/geo_files/two_holes_2D.geo"), 2
     )
 
     pg.convert_from_pp(mdg)
@@ -512,13 +532,12 @@ def test_properties_one_hole_2D():
 
     test_properties(mdg)
 
-    # test_solver(mdg)
-
 
 def test_properties_holes_3D():
     mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
-        dirname + "/geo_files/missing_donut.geo",
+        # Path(dirname + "/geo_files/missing_donut.geo"),
         # dirname + "/geo_files/one_hole_3D.geo",
+        Path(dirname + "/geo_files/two_holes_3D.geo"),
         3,
         # dirname + "/geo_files/two_holes_3D.geo", 3
     )
@@ -560,12 +579,27 @@ def plot_tree_with_holes():
     )
 
 
+def test_something():
+    mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
+        Path(dirname + "/geo_files/missing_donut.geo"),
+        # dirname + "/geo_files/one_hole_3D.geo",
+        # Path(dirname + "/geo_files/two_holes_3D.geo"),
+        3,
+        # dirname + "/geo_files/two_holes_3D.geo", 3
+    )
+    pg.convert_from_pp(mdg)
+    mdg.compute_geometry()
+    visualize_cohomology(mdg, 1)
+
+
 if __name__ == "__main__":
     # plot_tree_with_holes()
     # plot_trees_mdg()
     # test_properties_holes_2D()
-    test_properties_one_hole_2D()
-    # test_properties_holes_3D()
+    # test_properties_one_hole_2D()
+    test_properties_holes_3D()
+
+    # test_properties_cube()
     # test_properties_mdg(5)
     # test_properties_seven()
     # print("Testing decomposition and co-chain properties")

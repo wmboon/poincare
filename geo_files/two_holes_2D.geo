@@ -44,6 +44,6 @@ Curve Loop(3) = {15, -13, -9, 12};
 //+
 Surface(1) = {1, 2, 3};
 //+
-Physical Surface(19) = {1};
+Physical Surface("2", 19) = {1};
 //+
 Physical Curve("1", 20) = {18, 16, 1, 17};
