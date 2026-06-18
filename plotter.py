@@ -4,7 +4,7 @@ import numpy as np
 import scipy.sparse as sps
 
 
-def visualize_2d(self, mdg: pg.MixedDimensionalGrid, fig_name=None, **kwargs):
+def visualize_2d(tree, mdg: pg.MixedDimensionalGrid, fig_name=None, **kwargs):
     """
     Create a graphical illustration of the spanning tree superimposed on the grid.
 
@@ -64,17 +64,18 @@ def visualize_2d(self, mdg: pg.MixedDimensionalGrid, fig_name=None, **kwargs):
         min_coord = np.min(sd_top.nodes, axis=1)
         max_coord = np.max(sd_top.nodes, axis=1)
 
-        ax.set_xlim((min_coord[0], max_coord[0]))
-        ax.set_ylim((min_coord[1], max_coord[1]))
+        padding = 0.02
+        ax.set_xlim((min_coord[0] - padding, max_coord[0] + padding))
+        ax.set_ylim((min_coord[1] - padding, max_coord[1] + padding))
 
     ax.set_aspect("equal")
 
     # Draw the tree that spans all cells
     if draw_tree:
-        graph = nx.from_scipy_sparse_array(self.tree)
+        graph = nx.from_scipy_sparse_array(tree.tree)
         cell_centers = np.hstack([sd.cell_centers for sd in mdg.subdomains()])
         node_color = ["blue"] * cell_centers.shape[1]
-        for sc in self.starting_cells:
+        for sc in tree.starting_cells:
             node_color[sc] = start_color
 
         nx.draw(
@@ -87,10 +88,10 @@ def visualize_2d(self, mdg: pg.MixedDimensionalGrid, fig_name=None, **kwargs):
         )
 
         # Add connections from the roots to the starting faces
-        num_bdry = len(self.starting_faces)
-        bdry_graph = sps.diags_array(  # type: ignore[call-overload]
+        num_bdry = len(tree.starting_faces)
+        bdry_graph = sps.diags_array(
             np.ones(num_bdry),
-            num_bdry,
+            offsets=num_bdry,
             shape=(2 * num_bdry, 2 * num_bdry),
         )
         graph = nx.from_scipy_sparse_array(bdry_graph)
@@ -99,8 +100,8 @@ def visualize_2d(self, mdg: pg.MixedDimensionalGrid, fig_name=None, **kwargs):
         cell_centers = np.hstack([sd.cell_centers for sd in mdg.subdomains()])
         node_centers = np.hstack(
             (
-                face_centers[: mdg.dim_max(), self.starting_faces],
-                cell_centers[: mdg.dim_max(), self.starting_cells],
+                face_centers[: mdg.dim_max(), tree.starting_faces],
+                cell_centers[: mdg.dim_max(), tree.starting_cells],
             )
         ).T
 
@@ -114,7 +115,28 @@ def visualize_2d(self, mdg: pg.MixedDimensionalGrid, fig_name=None, **kwargs):
 
     # Draw the tree that spans all nodes
     if draw_complement:
-        curl = pg.curl(mdg)[~self.flagged_faces, :]
+        poin = pg.Poincare(mdg)
+
+        curl = pg.curl(mdg)[poin.hom_spaces[1], :]
+        incidence = curl.T @ curl
+        incidence -= sps.triu(incidence)
+
+        graph = nx.from_scipy_sparse_array(incidence)
+
+        node_color = ["black"] * sd_top.nodes.shape[1]
+
+        nx.draw(
+            graph,
+            sd_top.nodes[: mdg.dim_max(), :].T,
+            node_color=node_color,
+            node_size=30,
+            edge_color="green",
+            style="dashed",
+            width=1.5,
+            ax=ax,
+        )
+
+        curl = pg.curl(mdg)[poin.zer_spaces[1], :]
         incidence = curl.T @ curl
         incidence -= sps.triu(incidence)
 
@@ -134,6 +156,7 @@ def visualize_2d(self, mdg: pg.MixedDimensionalGrid, fig_name=None, **kwargs):
 
     plt.draw()
     if fig_name is not None:
+        # fig.set_size_inches(4, 4)
         plt.savefig(fig_name, bbox_inches="tight", pad_inches=0.1)
 
     plt.close()

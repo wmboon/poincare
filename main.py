@@ -1,9 +1,13 @@
 import os
+import sys
 import time
+from io import StringIO
 from pathlib import Path
 
 import numpy as np
 import porepy as pp
+
+import plotter
 
 # import pyamg
 import pygeon as pg
@@ -32,11 +36,41 @@ def generate_random_source(mdg: pg.MixedDimensionalGrid):
     return f
 
 
+def generate_sin_source(mdg: pg.MixedDimensionalGrid):
+    sd = mdg.subdomains(dim=mdg.dim_max())[0]
+
+    def source(x):
+        return np.prod(np.sin(2 * np.pi * x[: sd.dim]))
+
+    def source_vec(x):
+        return source(x) * np.array([1, -1, 2])
+
+    f_0 = pg.Lagrange1().interpolate(sd, source)
+
+    f_2 = pg.RT0().interpolate(sd, source_vec)
+    f_3 = pg.PwConstants().interpolate(sd, source)
+
+    if sd.dim == 3:
+        f_1 = pg.Nedelec0().interpolate(sd, source_vec)
+
+        return [f_0, f_1, f_2, f_3]
+    else:
+        return [f_0, f_2, f_3]
+
+
 def generate_N_list(dim, n_grids=5):
     if dim == 2:
         N_list = 2 ** np.arange(3, 3 + n_grids)
     else:
         N_list = 2 ** np.arange(n_grids)
+    return N_list
+
+
+def generate_N_list_Poincare(dim, n_grids=5):
+    if dim == 2:
+        N_list = 2 ** np.arange(3, 3 + n_grids)
+    else:
+        N_list = 1.5 ** np.arange(2, 2 + n_grids)
     return N_list
 
 
@@ -99,22 +133,23 @@ def test_properties(mdg):
     print("All properties passed, dim = {}".format(mdg.dim_max()))
 
 
-def visualize_cohomology(mdg, k):
+def visualize_cohomology(mdg, k, data_list=[]):
     poin = pg.Poincare(mdg)
 
     A = poin.orthogonalize_cohomology_basis(k)
 
-    space = pg.RT0() if poin.dim == 2 else pg.Nedelec0()
+    if k == 1:
+        space = pg.RT0() if poin.dim == 2 else pg.Nedelec0()
+    elif k == 2:
+        space = pg.RT0()
+
     eval = space.eval_at_cell_centers(poin.top_sd)
-    data_list = []
+
     for i, col in enumerate(A.T):
         cell_u = (eval @ col).reshape((3, -1))
-        data_list.append((f"cohom_{i}", cell_u))
+        data_list.append((f"cohom_{k}_{i}", cell_u))
 
-    exporter = pp.Exporter(mdg, "cohomology")
-    exporter.write_vtu(data_list)
-
-    pass
+    return data_list
 
 
 def get_tips(mdg):
@@ -134,13 +169,19 @@ def test_solver_cube(N=16, dim=3):
 
 
 def test_solver(mdg: pg.MixedDimensionalGrid):
+    buffer = StringIO()
+    sys.stdout = buffer
+
     dim = mdg.dim_max()
     sd = mdg.subdomains(dim=dim)[0]
     print("h = {:.2e}".format(np.mean(sd.cell_diameters())))
 
-    f = generate_random_source(mdg)
-
     poin = pg.Poincare(mdg)
+
+    f = generate_sin_source(mdg)
+
+    cohom_basis = [poin.orthogonalize_cohomology_basis(k) for k in range(dim + 1)]
+    e = [np.random.rand(hom_basis.shape[1]) for hom_basis in cohom_basis]
 
     # Assemble mass and stiffness matrices
     M = [mass_matrix(mdg, dim - k, None) for k in range(dim + 1)]
@@ -149,8 +190,13 @@ def test_solver(mdg: pg.MixedDimensionalGrid):
     S = [D[k].T @ MD[k] for k in range(dim)]
     S.append(stiff_matrix(mdg, 0, None))
 
-    f[0] -= np.sum(M[0] @ f[0]) / np.sum(M[0])
+    MC = [M[k] @ cohom_basis[k] for k in range(dim + 1)]
+    CMC = [cohom_basis[k].T @ MC[k] for k in range(dim + 1)]
 
+    # Multiply right-hand side
+    f = [M[k] @ f[k] for k in range(dim + 1)]
+
+    # Zerfo out tips
     tip_ridges, tip_faces = get_tips(mdg)
     ess_vals = [np.zeros_like(f_i, dtype=bool) for f_i in f]
     ess_vals[dim - 1] = tip_faces
@@ -159,55 +205,147 @@ def test_solver(mdg: pg.MixedDimensionalGrid):
     def timed_solve(A, b):
         t = time.time()
         sol = sps.linalg.spsolve(A.tocsc(), b)
-        print("ndof: {}, Time: {:1.2f}s".format(len(b), time.time() - t))
+        print(f"ndof: {len(b):6}, Time: {time.time() - t:5.2f}s")
+
+        return sol
+
+    def timed_solve_cohom(A, b):
+        t = time.time()
+        sol = np.linalg.solve(A, b)
+        print(f"ndof: {len(b):6}, Time: {time.time() - t:5.2f}s")
 
         return sol
 
     for k in range(1, dim + 1):
         print("k = {}".format(k))
 
-        A = sps.bmat([[M[k - 1], -MD[k - 1].T], [MD[k - 1], S[k]]])
-        b = np.hstack((M[k - 1] @ f[k - 1], M[k] @ f[k]))
+        A = sps.bmat(
+            [
+                [M[k - 1], -MD[k - 1].T, None],
+                [MD[k - 1], S[k], -MC[k]],
+                [None, MC[k].T, None],
+            ]
+        )
+        b = np.hstack((M[k - 1] @ f[k - 1], M[k] @ f[k], CMC[k] @ e[k]))
         LS = pg.LinearSystem(A, b)
 
-        ess_bc = np.concatenate((ess_vals[k - 1], ess_vals[k]))
+        ess_bc = np.concatenate(
+            (ess_vals[k - 1], ess_vals[k], np.zeros_like(e[k], dtype=bool))
+        )
         LS.flag_ess_bc(ess_bc, np.zeros_like(ess_bc))
 
         vu = LS.solve(solver=timed_solve)
 
-        v_true = vu[: M[k - 1].shape[0]]
-        u_true = vu[M[k - 1].shape[0] :]
+        v_true, u_true, phi_true = np.split(
+            vu, [M[k - 1].shape[0], M[k - 1].shape[0] + M[k].shape[0]]
+        )
 
         # Step 1
-        v_b = poin.solve_subproblem(k - 1, S[k - 1], MD[k - 1].T @ f[k], timed_solve)
+        v = poin.solve_subproblem(k - 1, S[k - 1], MD[k - 1].T @ f[k], timed_solve)
 
         # Step 2
         if k >= 2:
             w_v = poin.solve_subproblem(
-                k - 2, S[k - 2], MD[k - 2].T @ (f[k - 1] - v_b), timed_solve
+                k - 2, S[k - 2], MD[k - 2].T @ (f[k - 1] - v), timed_solve
             )
-            v = v_b + D[k - 2] @ w_v
+            v += D[k - 2] @ w_v
 
         else:  # k = 1, so v is a 0-form
-            print("ndof: 0, Time: -s")
-            v = v_b - np.sum(M[0] @ v_b) / np.sum(M[0])
+            print(f"ndof: {0:5}, Time: {0:5.2f}s")
+
+        # Step 3
+        varphi_coeff = timed_solve_cohom(CMC[k - 1], MC[k - 1].T @ (f[k - 1] - v))
+        v += cohom_basis[k - 1] @ varphi_coeff
 
         assert np.allclose(v_true, v)
 
-        # Step 3
-        u_b = poin.solve_subproblem(k, S[k], M[k] @ f[k] - MD[k - 1] @ v, timed_solve)
-
         # Step 4
-        v_u = poin.solve_subproblem(
-            k - 1, S[k - 1], M[k - 1] @ (v - f[k - 1]) - MD[k - 1].T @ u_b, timed_solve
+        phi_coeff = timed_solve_cohom(CMC[k], MC[k].T @ (-f[k]))
+        phi_f = cohom_basis[k] @ phi_coeff
+
+        # Step 5
+        u_hat = poin.solve_subproblem(
+            k, S[k], M[k] @ (f[k] + phi_f) - MD[k - 1] @ (v), timed_solve
         )
 
-        u = u_b + D[k - 1] @ v_u
+        # Step 6
+        v_u = poin.solve_subproblem(
+            k - 1,
+            S[k - 1],
+            M[k - 1] @ (v - f[k - 1]) - MD[k - 1].T @ u_hat,
+            timed_solve,
+        )
+
+        # Step 7
+        phi_coeff = timed_solve_cohom(CMC[k], CMC[k] @ e[k] - MC[k].T @ u_hat)
+        phi_u = cohom_basis[k] @ phi_coeff
+
+        u = u_hat + D[k - 1] @ v_u + phi_u
         assert np.allclose(u_true, u)
+
+    sys.stdout = sys.__stdout__  # restore stdout
+
+    output = buffer.getvalue()
+    print(output)
+
+    post_process_table(output, dim)
+
+
+def post_process_table(output, dim):
+
+    # post-processing as a table
+    lines = output.splitlines()
+    table = [line.split() for line in lines]
+
+    indices = [0, 1, 10]
+    if dim == 3:
+        indices.append(19)
+    keep = np.ones(len(table), dtype=bool)
+    keep[indices] = False
+
+    table = [table[k] for k in np.where(keep)[0]]
+
+    table = np.array(table).astype(object)
+
+    # Remove commas and s
+    for i in range(table.shape[0]):
+        for j in range(table.shape[1]):
+            table[i, j] = table[i, j][:-1]
+
+    table = np.hstack(np.split(table, dim))
+    table = np.roll(table, -1, axis=0)
+
+    table = table[:, 1::2]
+
+    # sums
+    sums = table[:-1].copy()
+    sums = np.sum(sums.astype(float), axis=0)
+    sums[::2] = [f"{i:5}" for i in sums[::2]]
+    sums[1::2] = [f"{i:5.2f}" for i in sums[1::2]]
+
+    table = np.vstack((table, table[-1]))
+    table[-2] = sums
+
+    for i in range(table.shape[0]):
+        for j in range(0, table.shape[1], 2):
+            ndof = int(float(table[i, j]))
+            table[i, j] = "\\num{ " + f"{ndof:5}" + "}"
+            if ndof:
+                table[i, j + 1] = f"{float(table[i, j + 1]):5.2f}s"
+            else:
+                table[i, j + 1] = "     -"
+
+    str_table = []
+    for row in table:
+        str_table.append(" & ".join(row))
+
+    output = " \\\\ \n".join(str_table)
+    print("Table:")
+    print(output)
 
 
 def test_Poincare_constants(dim=2):
-    N_list = generate_N_list(dim)
+    N_list = generate_N_list_Poincare(dim)
 
     table = np.zeros((len(N_list), dim + 1))
 
@@ -245,29 +383,48 @@ def test_Poincare_constants(dim=2):
 
             table[N_i, k + 1] = np.sqrt(labda[0])
 
-    with np.printoptions(formatter={"float": "{: 0.2e}".format}):
+    from scipy.optimize import curve_fit
+
+    # Define the power law function: y = a * x^b
+    def power_law(x, a, b):
+        return a * np.power(x, b)
+
+    for col in table[-3:, 1:].T:
+        x = table[-3:, 0]
+
+        # Fit the data; p0 provides initial guesses for a and b
+        popt, pcov = curve_fit(power_law, x, col, p0=[1, 1])
+
+        a_opt, b_opt = popt
+        print(f"Fitted parameters: Rates = {b_opt:0.3f}")
+
+    with np.printoptions(formatter={"float": "{: 0.3f}".format}):
         print(table)
 
+    with np.printoptions(formatter={"float": "{: 1.2e}".format}):
+        print("Mesh sizes = ", table[:, 0])
 
-def test_aux_precond(dim=2, k=1, use_direct=True):
+
+def test_aux_precond(dim=2, k=1, solver="direct"):
     print("n = {}, k = {}".format(dim, k))
-    N_list = generate_N_list(dim)
 
+    N_list = generate_N_list(dim)
     alpha_list = np.power(10.0, np.arange(-4, 1))
 
     cond_table = np.zeros((len(N_list), len(alpha_list) + 1))
     iter_table = np.zeros((len(N_list), len(alpha_list)), dtype=int)
 
     for N_i, N in enumerate(N_list):
-        if use_direct:
-            if dim == 2 and N >= 2**7:
-                calc_cond = False
-            elif dim == 3 and N >= 2**4:
-                calc_cond = False
-            else:
-                calc_cond = True
-        else:
-            calc_cond = False
+        # if use_direct:
+        #     if dim == 2 and N >= 2**7:
+        #         calc_cond = False
+        #     elif dim == 3 and N >= 2**4:
+        #         calc_cond = False
+        #     else:
+        #         calc_cond = True
+        # else:
+        #     calc_cond = False
+        calc_cond = False
 
         sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
         mdg = pg.as_mdg(sd)
@@ -279,66 +436,83 @@ def test_aux_precond(dim=2, k=1, use_direct=True):
 
         cond_table[N_i, 0] = np.mean(sd.cell_diameters())
 
-        f = generate_random_source(mdg)
+        f = generate_sin_source(mdg)
 
         # assemble matrices
         M = [mass_matrix(mdg, dim - k, None) for k in range(dim + 1)]
         S = [stiff_matrix(mdg, dim - k, None) for k in range(dim + 1)]
         D = [diff(mdg, dim - k) for k in range(dim)]
 
+        # Multiply right-hand side
+        f = [M[k] @ f[k] for k in range(dim + 1)]
+
         def nonlocal_iterate(arr):
             nonlocal iters
             iters += 1
 
         # Define preconditioners
-        if use_direct:
+        match solver:
+            case "direct":
 
-            def precond_base(f, a_squared):
-                LS1 = pg.LinearSystem(S[k], f)
-                LS1.flag_ess_bc(~poin.bar_spaces[k], np.zeros_like(poin.bar_spaces[k]))
-                first_term = LS1.solve()
-
-                LS2 = pg.LinearSystem(a_squared * S[k - 1], D[k - 1].T @ f)
-                LS2.flag_ess_bc(
-                    ~poin.bar_spaces[k - 1], np.zeros_like(poin.bar_spaces[k - 1])
-                )
-                second_term = D[k - 1] @ LS2.solve()
-
-                return first_term + second_term
-
-        if not use_direct:
-            AMG1 = compute_AMG_solver(S[k], poin.bar_spaces[k])
-            AMG2 = compute_AMG_solver(S[k - 1], poin.bar_spaces[k - 1])
-
-            def precond_base(f, a_squared):
-                LS1 = pg.LinearSystem(S[k], f)
-                LS1.flag_ess_bc(~poin.bar_spaces[k], np.zeros_like(poin.bar_spaces[k]))
-                if k == dim - 1:
+                def precond_base(f, a_squared):
+                    LS1 = pg.LinearSystem(S[k], f)
+                    LS1.flag_ess_bc(
+                        ~poin.bar_spaces[k], np.zeros_like(poin.bar_spaces[k])
+                    )
                     first_term = LS1.solve()
-                else:
-                    first_term = LS1.solve(AMG1)
 
-                LS2 = pg.LinearSystem(S[k - 1], D[k - 1].T @ f)
-                LS2.flag_ess_bc(
-                    ~poin.bar_spaces[k - 1], np.zeros_like(poin.bar_spaces[k - 1])
-                )
-                second_term = D[k - 1] @ LS2.solve(AMG2) / a_squared
+                    LS2 = pg.LinearSystem(a_squared * S[k - 1], D[k - 1].T @ f)
+                    LS2.flag_ess_bc(
+                        ~poin.bar_spaces[k - 1], np.zeros_like(poin.bar_spaces[k - 1])
+                    )
+                    second_term = D[k - 1] @ LS2.solve()
 
-                return first_term + second_term
+                    return first_term + second_term
 
+            case "FSP-AMG":
+                AMG1 = compute_AMG_solver(S[k], poin.bar_spaces[k])
+                AMG2 = compute_AMG_solver(S[k - 1], poin.bar_spaces[k - 1])
+
+                def precond_base(f, a_squared):
+                    LS1 = pg.LinearSystem(S[k], f)
+                    LS1.flag_ess_bc(
+                        ~poin.bar_spaces[k], np.zeros_like(poin.bar_spaces[k])
+                    )
+                    if k == dim - 1:
+                        first_term = LS1.solve()
+                    else:
+                        first_term = LS1.solve(AMG1)
+
+                    LS2 = pg.LinearSystem(S[k - 1], D[k - 1].T @ f)
+                    LS2.flag_ess_bc(
+                        ~poin.bar_spaces[k - 1], np.zeros_like(poin.bar_spaces[k - 1])
+                    )
+                    second_term = D[k - 1] @ LS2.solve(AMG2) / a_squared
+
+                    return first_term + second_term
+
+        # print(f"N = {N}, h = {sd.cell_diameters().mean():.2e}")
         for alpha_i, alpha in enumerate(alpha_list):
-            print("N = {}, alpha = {:.2e}".format(N, alpha))
             a_squared = alpha**2
             A = a_squared * M[k] + S[k]
 
             iters = 0
 
-            def precond(f):
-                return precond_base(f, a_squared)
+            if solver == "AMG":
+                indices = np.ones(S[k].shape[0], dtype=bool)
+                AMG3 = compute_AMG_solver(A, indices)
+
+                def precond(f):
+                    return AMG3(0, f)
+
+            else:
+
+                def precond(f):
+                    return precond_base(f, a_squared)
 
             P = sps.linalg.LinearOperator(matvec=precond, shape=A.shape)
 
-            sps.linalg.minres(A, f[k], M=P, callback=nonlocal_iterate, rtol=1e-8)
+            x, inf = sps.linalg.cg(A, f[k], maxiter=750, M=P, callback=nonlocal_iterate)
             if calc_cond:
                 lambda_max = sps.linalg.eigs(
                     precond(A),
@@ -361,6 +535,8 @@ def test_aux_precond(dim=2, k=1, use_direct=True):
     if calc_cond:
         with np.printoptions(formatter={"float": "{:1.2f}".format}):
             print(cond_table)
+
+    print(solver)
     print(iter_table)
 
 
@@ -388,7 +564,7 @@ def plot_trees():
     mdg.compute_geometry()
 
     tree = pg.SpanningTree(mdg, "first_bdry")
-    tree.visualize_2d(
+    plotter.visualize_2d(
         mdg,
         "figures/first_cotree.svg",
         draw_grid=True,
@@ -396,7 +572,7 @@ def plot_trees():
         draw_cotree=False,
         start_color="blue",
     )
-    tree.visualize_2d(
+    plotter.visualize_2d(
         mdg,
         "figures/first_tree.svg",
         draw_grid=False,
@@ -406,7 +582,7 @@ def plot_trees():
     )
 
     tree = pg.SpanningTree(mdg, "all_bdry")
-    tree.visualize_2d(
+    plotter.visualize_2d(
         mdg,
         "figures/all_cotree.svg",
         draw_grid=True,
@@ -414,7 +590,7 @@ def plot_trees():
         draw_cotree=False,
         start_color="blue",
     )
-    tree.visualize_2d(
+    plotter.visualize_2d(
         mdg,
         "figures/all_tree.svg",
         draw_grid=False,
@@ -483,7 +659,7 @@ def plot_trees_mdg():
 
     tree = pg.SpanningTree(mdg, "all_bdry")
 
-    tree.visualize_2d(
+    plotter.visualize_2d(
         mdg,
         "figures/mdg_grid.svg",
         draw_grid=True,
@@ -491,7 +667,7 @@ def plot_trees_mdg():
         draw_cotree=False,
     )
 
-    tree.visualize_2d(
+    plotter.visualize_2d(
         mdg,
         "figures/mdg_cotree.svg",
         draw_grid=True,
@@ -499,7 +675,7 @@ def plot_trees_mdg():
         draw_cotree=False,
         start_color="blue",
     )
-    tree.visualize_2d(
+    plotter.visualize_2d(
         mdg,
         "figures/mdg_tree.svg",
         draw_grid=False,
@@ -532,54 +708,10 @@ def test_properties_one_hole_2D():
 
     test_properties(mdg)
 
+    test_solver(mdg)
+
 
 def test_properties_holes_3D():
-    mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
-        # Path(dirname + "/geo_files/missing_donut.geo"),
-        # dirname + "/geo_files/one_hole_3D.geo",
-        Path(dirname + "/geo_files/two_holes_3D.geo"),
-        3,
-        # dirname + "/geo_files/two_holes_3D.geo", 3
-    )
-
-    pg.convert_from_pp(mdg)
-    mdg.compute_geometry()
-
-    test_properties(mdg)
-    # test_solver(mdg)
-
-
-def plot_tree_with_holes():
-    mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
-        dirname + "/geo_files/one_hole_2D.geo",
-        2,
-        # dirname + "/geo_files/two_holes_2D.geo", 2
-    )
-
-    pg.convert_from_pp(mdg)
-    mdg.compute_geometry()
-
-    tree = pg.SpanningTree(mdg, "all_bdry")
-
-    tree.visualize_2d(
-        mdg,
-        "figures/holes_cotree.svg",
-        draw_grid=True,
-        draw_tree=True,
-        draw_cotree=False,
-        start_color="blue",
-    )
-    tree.visualize_2d(
-        mdg,
-        "figures/holes_trees.svg",
-        draw_grid=False,
-        draw_tree=True,
-        draw_cotree=True,
-        start_color="blue",
-    )
-
-
-def test_something():
     mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
         Path(dirname + "/geo_files/missing_donut.geo"),
         # dirname + "/geo_files/one_hole_3D.geo",
@@ -587,17 +719,71 @@ def test_something():
         3,
         # dirname + "/geo_files/two_holes_3D.geo", 3
     )
+
     pg.convert_from_pp(mdg)
     mdg.compute_geometry()
-    visualize_cohomology(mdg, 1)
+
+    # test_properties(mdg)
+    test_solver(mdg)
+
+
+def plot_tree_with_holes():
+    mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
+        Path(dirname + "/geo_files/one_hole_2D.geo"),
+        # Path(dirname + "/geo_files/two_holes_2D.geo"),
+        2,
+    )
+
+    pg.convert_from_pp(mdg)
+    mdg.compute_geometry()
+
+    tree = pg.SpanningTree(mdg, "all_bdry")
+
+    plotter.visualize_2d(
+        tree,
+        mdg,
+        "figures/holes_cotree.pdf",
+        draw_grid=True,
+        draw_tree=True,
+        draw_cotree=False,
+        start_color="blue",
+    )
+    plotter.visualize_2d(
+        tree,
+        mdg,
+        "figures/holes_trees.pdf",
+        draw_grid=False,
+        draw_tree=True,
+        draw_cotree=True,
+        start_color="blue",
+    )
+
+    pass
+
+
+def test_viz_cohom():
+    mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
+        Path(dirname + "/geo_files/missing_donut.geo"), 3
+    )
+    pg.convert_from_pp(mdg)
+    mdg.compute_geometry()
+
+    data_list = visualize_cohomology(mdg, 1)
+    data_list = visualize_cohomology(mdg, 2)
+
+    exporter = pp.Exporter(mdg, "cohomology")
+    exporter.write_vtu(data_list)
 
 
 if __name__ == "__main__":
-    # plot_tree_with_holes()
+    # test_properties_one_hole_2D()
+    # test_properties_holes_3D()
+    # test_solver_cube()
+
+    plot_tree_with_holes()
     # plot_trees_mdg()
     # test_properties_holes_2D()
-    # test_properties_one_hole_2D()
-    test_properties_holes_3D()
+    # test_viz_cohom()
 
     # test_properties_cube()
     # test_properties_mdg(5)
@@ -607,16 +793,17 @@ if __name__ == "__main__":
     #     test_properties_cube(dim=dim)
 
     #     print("Solving the Hodge-Laplace problem")
-    #     test_solver_cube(5, dim=dim)
 
     # print("Computing the Poincaré constants")
     # for dim in [2, 3]:
     #     test_Poincare_constants(dim)
 
-    # print("Preconditioning the projection problem")
-    # for dim in [2, 3]:
-    #     for k in range(1, dim):
-    #         test_aux_precond(dim, k)
+    print("Preconditioning the projection problem")
+    for dim in [2, 3]:
+        for k in range(1, dim):
+            # for solver in ["direct", "FSP-AMG"]:
+            for solver in ["AMG"]:
+                test_aux_precond(dim, k, solver)
 
     # print("Preconditioning the projection problem with AMG")
     # test_aux_precond(3, 1, False)

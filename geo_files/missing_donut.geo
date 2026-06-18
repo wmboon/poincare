@@ -1,8 +1,8 @@
 //+
 SetFactory("OpenCASCADE");
-Torus(1) = {0.5, 0.5, 0.5, 0.2, 0.1, 2 * Pi};
+Torus(1) = {0.5, 0.5, 0.5, 0.3, 0.1, 2 * Pi};
 //+
-MeshSize{ PointsOf{ Volume{1}; } } = 0.05;
+Mesh.CharacteristicLengthMax = 0.06;
 
 Box(2) = {0, 0, 0, 1, 1, 1};
 //+
