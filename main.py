@@ -7,17 +7,15 @@ from pathlib import Path
 import numpy as np
 import porepy as pp
 
-import plotter
-
 # import pyamg
 import pygeon as pg
 import scipy.sparse as sps
 from pygeon.numerics.differentials import exterior_derivative as diff
 from pygeon.numerics.innerproducts import mass_matrix
-from pygeon.numerics.linear_system import create_restriction
 from pygeon.numerics.stiffness import stiff_matrix
 
 import mdg_setup
+import plotter
 
 dirname = os.path.dirname(__file__)
 
@@ -51,7 +49,7 @@ def generate_sin_source(mdg: pg.MixedDimensionalGrid):
     f_3 = pg.PwConstants().interpolate(sd, source)
 
     if sd.dim == 3:
-        f_1 = pg.Nedelec0().interpolate(sd, source_vec)
+        f_1 = pg.NedelecR0().interpolate(sd, source_vec)
 
         return [f_0, f_1, f_2, f_3]
     else:
@@ -70,7 +68,7 @@ def generate_N_list_Poincare(dim, n_grids=5):
     if dim == 2:
         N_list = 2 ** np.arange(3, 3 + n_grids)
     else:
-        N_list = 1.5 ** np.arange(2, 2 + n_grids)
+        N_list = 2 * 1.5 ** np.arange(2, 2 + n_grids)
     return N_list
 
 
@@ -136,10 +134,10 @@ def test_properties(mdg):
 def visualize_cohomology(mdg, k, data_list=[]):
     poin = pg.Poincare(mdg)
 
-    A = poin.orthogonalize_cohomology_basis(k)
+    A = poin.compute_basis_harmonic_forms(k)
 
     if k == 1:
-        space = pg.RT0() if poin.dim == 2 else pg.Nedelec0()
+        space = pg.RT0() if poin.dim == 2 else pg.NedelecR0()
     elif k == 2:
         space = pg.RT0()
 
@@ -159,28 +157,116 @@ def get_tips(mdg):
     return tip_ridges, tip_faces
 
 
-def test_solver_cube(N=16, dim=3):
+def test_scaling_solver(dim=3):
+
+    N_list = generate_N_list_Poincare(dim) / 1.5
+
+    t_direct, t_poinc = [], []
+
+    for N in N_list:
+        times = test_solver_cube(N, dim, "5.2e").astype(float)
+        t_poinc.append(times[0])
+        t_direct.append(times[1])
+
+    t_poinc = np.array(t_poinc)
+    t_direct = np.array(t_direct)
+
+    np.savetxt("direct_scaling.csv", t_direct, delimiter=",")
+    np.savetxt("poinca_scaling.csv", t_poinc, delimiter=",")
+
+
+def plot_scaling(dim=3):
+    t_direct = np.loadtxt("direct_scaling.csv", delimiter=",")
+    t_poinc = np.loadtxt("poinca_scaling.csv", delimiter=",")
+    import matplotlib.pyplot as plt
+
+    width = 0.6 * 700 / 72.7
+    fig, ax = plt.subplots(figsize=(width, width * 0.75), constrained_layout=True)
+
+    # plt.rcParams.update(
+    #     {
+    #         "font.family": "serif",
+    #         # "font.size": 10,
+    #         # "axes.labelsize": 10,
+    #         # "legend.fontsize": 9,
+    #         # "xtick.labelsize": 9,
+    #         # "ytick.labelsize": 9,
+    #         # "pdf.fonttype": 42,
+    #     }
+    # )
+
+    colors = plt.rcParams["axes.prop_cycle"].by_key()["color"][:dim]
+    markers = ["^", "o", "s"]
+    for i in range(dim):
+        plt.loglog(
+            t_poinc[:, 2 * i],
+            t_poinc[:, 2 * i + 1],
+            "--",
+            color=colors[i],
+            marker=markers[i],
+        )
+        plt.loglog(
+            t_direct[:, 2 * i],
+            t_direct[:, 2 * i + 1],
+            color=colors[i],
+            marker=markers[i],
+        )
+
+    # Legend 1: line style
+    from matplotlib.lines import Line2D
+
+    style_handles = [
+        Line2D([], [], color="gray", linestyle="-", label="Original system"),
+        Line2D([], [], color="gray", linestyle="--", label="Sequential solver"),
+    ]
+
+    # Legend 2: markers (no line, just the marker)
+    style_handles.extend(
+        [
+            Line2D([], [], color=colors[0], linestyle="", marker="^", label="$k$ = 1"),
+            Line2D([], [], color=colors[1], linestyle="", marker="o", label="$k$ = 2"),
+            Line2D([], [], color=colors[2], linestyle="", marker="s", label="$k$ = 3"),
+        ]
+    )
+
+    ax.set_ylabel("Time (s)")
+    ax.set_xlabel("Degrees of freedom")
+
+    ax.legend(handles=style_handles)
+
+    plt.savefig("scaling.pdf")
+
+    rates = np.log(t_direct[-1, 1::2] / t_direct[-2, 1::2]) / np.log(
+        t_direct[-1, ::2] / t_direct[-2, ::2]
+    )
+
+    print(rates)
+
+
+def test_solver_cube(N=16, dim=3, fmt="5.2f"):
     # Check the four-step solver.
     mdg = pg.unit_grid(dim, 1 / N)
     pg.convert_from_pp(mdg)
     mdg.compute_geometry()
 
-    test_solver(mdg)
+    return test_solver(mdg, fmt)
 
 
-def test_solver(mdg: pg.MixedDimensionalGrid):
+def test_solver(mdg: pg.MixedDimensionalGrid, fmt="5.2f"):
     buffer = StringIO()
     sys.stdout = buffer
 
     dim = mdg.dim_max()
     sd = mdg.subdomains(dim=dim)[0]
-    print("h = {:.2e}".format(np.mean(sd.cell_diameters())))
+    # print("h = {:.2e}".format(np.mean(sd.cell_diameters())))
 
+    t = time.time()
     poin = pg.Poincare(mdg)
+    print(f"Tree Time: {time.time() - t:5.2e}s")
 
     f = generate_sin_source(mdg)
 
-    cohom_basis = [poin.orthogonalize_cohomology_basis(k) for k in range(dim + 1)]
+    cohom_basis = [poin.compute_basis_harmonic_forms(k) for k in range(dim + 1)]
     e = [np.random.rand(hom_basis.shape[1]) for hom_basis in cohom_basis]
 
     # Assemble mass and stiffness matrices
@@ -205,14 +291,14 @@ def test_solver(mdg: pg.MixedDimensionalGrid):
     def timed_solve(A, b):
         t = time.time()
         sol = sps.linalg.spsolve(A.tocsc(), b)
-        print(f"ndof: {len(b):6}, Time: {time.time() - t:5.2f}s")
+        print(f"ndof: {len(b):6}, Time: {time.time() - t:{fmt}}s")
 
         return sol
 
     def timed_solve_cohom(A, b):
         t = time.time()
         sol = np.linalg.solve(A, b)
-        print(f"ndof: {len(b):6}, Time: {time.time() - t:5.2f}s")
+        print(f"ndof: {len(b):6}, Time: {time.time() - t:{fmt}}s")
 
         return sol
 
@@ -251,7 +337,7 @@ def test_solver(mdg: pg.MixedDimensionalGrid):
             v += D[k - 2] @ w_v
 
         else:  # k = 1, so v is a 0-form
-            print(f"ndof: {0:5}, Time: {0:5.2f}s")
+            print(f"ndof: {0:5}, Time: {0:{fmt}}s")
 
         # Step 3
         varphi_coeff = timed_solve_cohom(CMC[k - 1], MC[k - 1].T @ (f[k - 1] - v))
@@ -267,6 +353,8 @@ def test_solver(mdg: pg.MixedDimensionalGrid):
         u_hat = poin.solve_subproblem(
             k, S[k], M[k] @ (f[k] + phi_f) - MD[k - 1] @ (v), timed_solve
         )
+        if k == dim:
+            print(f"ndof: {0:5}, Time: {0:{fmt}}s")
 
         # Step 6
         v_u = poin.solve_subproblem(
@@ -288,7 +376,7 @@ def test_solver(mdg: pg.MixedDimensionalGrid):
     output = buffer.getvalue()
     print(output)
 
-    post_process_table(output, dim)
+    return post_process_table(output, dim)
 
 
 def post_process_table(output, dim):
@@ -321,17 +409,19 @@ def post_process_table(output, dim):
     sums = table[:-1].copy()
     sums = np.sum(sums.astype(float), axis=0)
     sums[::2] = [f"{i:5}" for i in sums[::2]]
-    sums[1::2] = [f"{i:5.2f}" for i in sums[1::2]]
+    sums[1::2] = [f"{i:5.2e}" for i in sums[1::2]]
 
     table = np.vstack((table, table[-1]))
     table[-2] = sums
+
+    times = table[-2:].copy()
 
     for i in range(table.shape[0]):
         for j in range(0, table.shape[1], 2):
             ndof = int(float(table[i, j]))
             table[i, j] = "\\num{ " + f"{ndof:5}" + "}"
             if ndof:
-                table[i, j + 1] = f"{float(table[i, j + 1]):5.2f}s"
+                table[i, j + 1] = f"{float(table[i, j + 1]):5.2e}s"
             else:
                 table[i, j + 1] = "     -"
 
@@ -343,14 +433,52 @@ def post_process_table(output, dim):
     print("Table:")
     print(output)
 
+    return times
 
-def test_Poincare_constants(dim=2):
+
+def test_Poincare_constants(dim=2, donut=False):
     N_list = generate_N_list_Poincare(dim)
+
+    # if donut:
+    #     N_list = N_list * 2
 
     table = np.zeros((len(N_list), dim + 1))
 
     for N_i, N in enumerate(N_list):
-        mdg = pg.unit_grid(dim, 1 / N)
+        print(f"N = {N}")
+        if not donut:
+            mdg = pg.unit_grid(dim, 1 / N)
+        else:
+            GEO = """//+
+            SetFactory("OpenCASCADE");
+            Torus(1) = {{0.5, 0.5, 0.5, 0.3, 0.1, 2 * Pi}};
+            //+
+            Mesh.CharacteristicLengthMax = {lc};
+
+            Box(2) = {{0, 0, 0, 1, 1, 1}};
+            //+
+            Delete {{
+            Volume{{1}}; Volume{{2}};
+            }}
+            //+
+            Surface Loop(3) = {{7, 2, 4, 6, 3, 5}};
+            //+
+            Surface Loop(4) = {{1}};
+            //+
+            Volume(1) = {{3, 4}};
+            //+
+            Physical Volume("1", 15) = {{1}};
+            """
+
+            # ---- change here ----
+            lc_max = 1 / N
+            # ---------------------
+
+            with open("torus_box.geo", "w") as f:
+                f.write(GEO.format(lc=lc_max))
+            assert dim == 3
+
+            mdg = pp.fracs.fracture_importer.dfm_from_gmsh(Path("torus_box.geo"), 3)
 
         pg.convert_from_pp(mdg)
         mdg.compute_geometry()
@@ -360,16 +488,20 @@ def test_Poincare_constants(dim=2):
         table[N_i, 0] = np.mean(poin.top_sd.cell_diameters())
 
         for k in range(dim):
-            R = create_restriction(poin.bar_spaces[k])
+            R = pg.create_restriction(poin.bar_spaces[k])
             M = R @ mass_matrix(mdg, dim - k, None) @ R.T
             S = R @ stiff_matrix(mdg, dim - k, None) @ R.T
 
-            if k == 0:  # Remove the constants
-                proj = mass_matrix(mdg, dim - k, None)
-                proj /= np.sum(proj)
+            cohom = poin.compute_basis_harmonic_forms(k)
+            if False:  # np.any(cohom):  # Remove the constants
+                M_full = mass_matrix(mdg, dim - k, None)
 
                 def M_op(v):
-                    return M @ (v - np.ones(len(v) + 1) @ proj @ R.T @ v)
+                    M_cohom = cohom.T @ M_full @ cohom
+                    v_proj = (
+                        R @ cohom @ np.linalg.solve(M_cohom, cohom.T @ M_full @ R.T @ v)
+                    )
+                    return M @ (v - v_proj)
 
                 M2 = sps.linalg.LinearOperator(matvec=M_op, shape=M.shape)
                 labda = sps.linalg.eigsh(
@@ -384,6 +516,18 @@ def test_Poincare_constants(dim=2):
             table[N_i, k + 1] = np.sqrt(labda[0])
 
     from scipy.optimize import curve_fit
+
+    true_constants = 1 / (np.pi * np.arange(1, dim + 1))
+    if donut:
+        true_constants *= 0
+
+    ans1 = np.abs(table[-2, 1:] - true_constants)
+    ans2 = np.abs(table[-1, 1:] - true_constants)
+    h1, h2 = table[-2:, 0]
+
+    rates = np.log(ans1 / ans2) / np.log(h1 / h2)
+    with np.printoptions(formatter={"float": "{: 0.3f}".format}):
+        print("Rates = {:}".format(rates))
 
     # Define the power law function: y = a * x^b
     def power_law(x, a, b):
@@ -778,9 +922,12 @@ def test_viz_cohom():
 if __name__ == "__main__":
     # test_properties_one_hole_2D()
     # test_properties_holes_3D()
-    # test_solver_cube()
+    test_solver_cube(16)
 
-    plot_tree_with_holes()
+    # test_scaling_solver()
+    # plot_scaling()
+
+    # plot_tree_with_holes()
     # plot_trees_mdg()
     # test_properties_holes_2D()
     # test_viz_cohom()
@@ -798,12 +945,15 @@ if __name__ == "__main__":
     # for dim in [2, 3]:
     #     test_Poincare_constants(dim)
 
-    print("Preconditioning the projection problem")
-    for dim in [2, 3]:
-        for k in range(1, dim):
-            # for solver in ["direct", "FSP-AMG"]:
-            for solver in ["AMG"]:
-                test_aux_precond(dim, k, solver)
+    # print("Computing the Poincaré constants: donut")
+    # test_Poincare_constants(3, True)
+
+    # print("Preconditioning the projection problem")
+    # for dim in [2, 3]:
+    #     for k in range(1, dim):
+    #         # for solver in ["direct", "FSP-AMG"]:
+    #         for solver in ["AMG"]:
+    #             test_aux_precond(dim, k, solver)
 
     # print("Preconditioning the projection problem with AMG")
     # test_aux_precond(3, 1, False)
