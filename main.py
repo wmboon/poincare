@@ -6,8 +6,6 @@ from pathlib import Path
 
 import numpy as np
 import porepy as pp
-
-# import pyamg
 import pygeon as pg
 import scipy.sparse as sps
 from pygeon.numerics.differentials import exterior_derivative as diff
@@ -128,7 +126,7 @@ def test_properties(mdg):
 
         check_chain_property(poin, k, f_)
 
-    print("All properties passed, dim = {}".format(mdg.dim_max()))
+    print(f"All properties passed, dim = {mdg.dim_max()}")
 
 
 def visualize_cohomology(mdg, k, data_list=[]):
@@ -181,19 +179,7 @@ def plot_scaling(dim=3):
     import matplotlib.pyplot as plt
 
     width = 0.6 * 700 / 72.7
-    fig, ax = plt.subplots(figsize=(width, width * 0.75), constrained_layout=True)
-
-    # plt.rcParams.update(
-    #     {
-    #         "font.family": "serif",
-    #         # "font.size": 10,
-    #         # "axes.labelsize": 10,
-    #         # "legend.fontsize": 9,
-    #         # "xtick.labelsize": 9,
-    #         # "ytick.labelsize": 9,
-    #         # "pdf.fonttype": 42,
-    #     }
-    # )
+    _, ax = plt.subplots(figsize=(width, width * 0.75), constrained_layout=True)
 
     colors = plt.rcParams["axes.prop_cycle"].by_key()["color"][:dim]
     markers = ["^", "o", "s"]
@@ -258,12 +244,9 @@ def test_solver(mdg: pg.MixedDimensionalGrid, fmt="5.2f"):
 
     dim = mdg.dim_max()
     sd = mdg.subdomains(dim=dim)[0]
-    # print("h = {:.2e}".format(np.mean(sd.cell_diameters())))
+    print(f"h = {np.mean(sd.cell_diameters()):.2e}")
 
-    t = time.time()
     poin = pg.Poincare(mdg)
-    print(f"Tree Time: {time.time() - t:5.2e}s")
-
     f = generate_sin_source(mdg)
 
     cohom_basis = [poin.compute_basis_harmonic_forms(k) for k in range(dim + 1)]
@@ -303,7 +286,7 @@ def test_solver(mdg: pg.MixedDimensionalGrid, fmt="5.2f"):
         return sol
 
     for k in range(1, dim + 1):
-        print("k = {}".format(k))
+        print(f"k = {k}")
 
         A = sps.bmat(
             [
@@ -322,7 +305,7 @@ def test_solver(mdg: pg.MixedDimensionalGrid, fmt="5.2f"):
 
         vu = LS.solve(solver=timed_solve)
 
-        v_true, u_true, phi_true = np.split(
+        v_true, u_true, _ = np.split(
             vu, [M[k - 1].shape[0], M[k - 1].shape[0] + M[k].shape[0]]
         )
 
@@ -492,21 +475,22 @@ def test_Poincare_constants(dim=2, donut=False):
             M = R @ mass_matrix(mdg, dim - k, None) @ R.T
             S = R @ stiff_matrix(mdg, dim - k, None) @ R.T
 
-            cohom = poin.compute_basis_harmonic_forms(k)
-            if False:  # np.any(cohom):  # Remove the constants
-                M_full = mass_matrix(mdg, dim - k, None)
+            if False:  # Remove the constants
+                # cohom = poin.compute_basis_harmonic_forms(k)
+                # M_full = mass_matrix(mdg, dim - k, None)
 
-                def M_op(v):
-                    M_cohom = cohom.T @ M_full @ cohom
-                    v_proj = (
-                        R @ cohom @ np.linalg.solve(M_cohom, cohom.T @ M_full @ R.T @ v)
-                    )
-                    return M @ (v - v_proj)
+                # def M_op(v):
+                #     M_cohom = cohom.T @ M_full @ cohom
+                #     v_proj = (
+                #         R @ cohom @ np.linalg.solve(M_cohom, cohom.T @ M_full @ R.T @ v)
+                #     )
+                #     return M @ (v - v_proj)
 
-                M2 = sps.linalg.LinearOperator(matvec=M_op, shape=M.shape)
-                labda = sps.linalg.eigsh(
-                    M2, 1, M=S, which="LM", tol=1e-6, return_eigenvectors=False
-                )
+                # M2 = sps.linalg.LinearOperator(matvec=M_op, shape=M.shape)
+                # labda = sps.linalg.eigsh(
+                #     M2, 1, M=S, which="LM", tol=1e-6, return_eigenvectors=False
+                # )
+                pass
 
             else:
                 labda = sps.linalg.eigsh(
@@ -514,8 +498,6 @@ def test_Poincare_constants(dim=2, donut=False):
                 )
 
             table[N_i, k + 1] = np.sqrt(labda[0])
-
-    from scipy.optimize import curve_fit
 
     true_constants = 1 / (np.pi * np.arange(1, dim + 1))
     if donut:
@@ -527,20 +509,7 @@ def test_Poincare_constants(dim=2, donut=False):
 
     rates = np.log(ans1 / ans2) / np.log(h1 / h2)
     with np.printoptions(formatter={"float": "{: 0.3f}".format}):
-        print("Rates = {:}".format(rates))
-
-    # Define the power law function: y = a * x^b
-    def power_law(x, a, b):
-        return a * np.power(x, b)
-
-    for col in table[-3:, 1:].T:
-        x = table[-3:, 0]
-
-        # Fit the data; p0 provides initial guesses for a and b
-        popt, pcov = curve_fit(power_law, x, col, p0=[1, 1])
-
-        a_opt, b_opt = popt
-        print(f"Fitted parameters: Rates = {b_opt:0.3f}")
+        print(f"Rates = {rates}")
 
     with np.printoptions(formatter={"float": "{: 0.3f}".format}):
         print(table)
@@ -550,7 +519,7 @@ def test_Poincare_constants(dim=2, donut=False):
 
 
 def test_aux_precond(dim=2, k=1, solver="direct"):
-    print("n = {}, k = {}".format(dim, k))
+    print(f"n = {dim}, k = {k}")
 
     N_list = generate_N_list(dim)
     alpha_list = np.power(10.0, np.arange(-4, 1))
@@ -559,15 +528,6 @@ def test_aux_precond(dim=2, k=1, solver="direct"):
     iter_table = np.zeros((len(N_list), len(alpha_list)), dtype=int)
 
     for N_i, N in enumerate(N_list):
-        # if use_direct:
-        #     if dim == 2 and N >= 2**7:
-        #         calc_cond = False
-        #     elif dim == 3 and N >= 2**4:
-        #         calc_cond = False
-        #     else:
-        #         calc_cond = True
-        # else:
-        #     calc_cond = False
         calc_cond = False
 
         sd = pg.unit_grid(dim, 1 / N, as_mdg=False)
@@ -598,7 +558,7 @@ def test_aux_precond(dim=2, k=1, solver="direct"):
         match solver:
             case "direct":
 
-                def precond_base(f, a_squared):
+                def precond_base(f, a_squared, *, poin=poin, k=k, S=S, D=D):
                     LS1 = pg.LinearSystem(S[k], f)
                     LS1.flag_ess_bc(
                         ~poin.bar_spaces[k], np.zeros_like(poin.bar_spaces[k])
@@ -617,7 +577,9 @@ def test_aux_precond(dim=2, k=1, solver="direct"):
                 AMG1 = compute_AMG_solver(S[k], poin.bar_spaces[k])
                 AMG2 = compute_AMG_solver(S[k - 1], poin.bar_spaces[k - 1])
 
-                def precond_base(f, a_squared):
+                def precond_base(
+                    f, a_squared, *, poin=poin, k=k, S=S, D=D, AMG1=AMG1, AMG2=AMG2
+                ):
                     LS1 = pg.LinearSystem(S[k], f)
                     LS1.flag_ess_bc(
                         ~poin.bar_spaces[k], np.zeros_like(poin.bar_spaces[k])
@@ -646,17 +608,19 @@ def test_aux_precond(dim=2, k=1, solver="direct"):
                 indices = np.ones(S[k].shape[0], dtype=bool)
                 AMG3 = compute_AMG_solver(A, indices)
 
-                def precond(f):
+                def precond(f, *, AMG3=AMG3):
                     return AMG3(0, f)
 
             else:
 
-                def precond(f):
+                def precond(f, *, precond_base=precond_base, a_squared=a_squared):
                     return precond_base(f, a_squared)
 
             P = sps.linalg.LinearOperator(matvec=precond, shape=A.shape)
 
-            x, inf = sps.linalg.cg(A, f[k], maxiter=750, M=P, callback=nonlocal_iterate)
+            _x, _info = sps.linalg.cg(
+                A, f[k], maxiter=750, M=P, callback=nonlocal_iterate
+            )
             if calc_cond:
                 lambda_max = sps.linalg.eigs(
                     precond(A),
@@ -902,8 +866,6 @@ def plot_tree_with_holes():
         start_color="blue",
     )
 
-    pass
-
 
 def test_viz_cohom():
     mdg = pp.fracs.fracture_importer.dfm_from_gmsh(
@@ -922,7 +884,7 @@ def test_viz_cohom():
 if __name__ == "__main__":
     # test_properties_one_hole_2D()
     # test_properties_holes_3D()
-    test_solver_cube(16)
+    test_solver_cube()
 
     # test_scaling_solver()
     # plot_scaling()
