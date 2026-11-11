@@ -129,7 +129,8 @@ def test_properties(mdg):
     print(f"All properties passed, dim = {mdg.dim_max()}")
 
 
-def visualize_cohomology(mdg, k, data_list=[]):
+def visualize_cohomology(mdg, k):
+    data_list = []
     poin = pg.Poincare(mdg)
 
     A = poin.compute_basis_harmonic_forms(k)
@@ -668,13 +669,12 @@ def compute_AMG_solver(A, bar_space):
 
 
 def plot_trees():
-    mdg = pg.unit_grid(2, 1 / 5, as_mdg=True)
+    mdg = pg.unit_grid(2, 1 / 5)
     mdg.compute_geometry()
 
-    tree = pg.SpanningTree(mdg, "first_bdry")
     plotter.visualize_2d(
         mdg,
-        "figures/first_cotree.svg",
+        "figures/all_cotree.pdf",
         draw_grid=True,
         draw_tree=True,
         draw_cotree=False,
@@ -682,25 +682,7 @@ def plot_trees():
     )
     plotter.visualize_2d(
         mdg,
-        "figures/first_tree.svg",
-        draw_grid=False,
-        draw_tree=True,
-        draw_cotree=True,
-        start_color="blue",
-    )
-
-    tree = pg.SpanningTree(mdg, "all_bdry")
-    plotter.visualize_2d(
-        mdg,
-        "figures/all_cotree.svg",
-        draw_grid=True,
-        draw_tree=True,
-        draw_cotree=False,
-        start_color="blue",
-    )
-    plotter.visualize_2d(
-        mdg,
-        "figures/all_tree.svg",
+        "figures/all_tree.pdf",
         draw_grid=False,
         draw_tree=True,
         draw_cotree=True,
@@ -764,8 +746,6 @@ def plot_trees_mdg():
         drift(top_sd, cn, neg, -eps * mean_vec)
 
         top_sd.compute_geometry()
-
-    tree = pg.SpanningTree(mdg, "all_bdry")
 
     plotter.visualize_2d(
         mdg,
@@ -845,10 +825,7 @@ def plot_tree_with_holes():
     pg.convert_from_pp(mdg)
     mdg.compute_geometry()
 
-    tree = pg.SpanningTree(mdg, "all_bdry")
-
     plotter.visualize_2d(
-        tree,
         mdg,
         "figures/holes_cotree.pdf",
         draw_grid=True,
@@ -857,7 +834,6 @@ def plot_tree_with_holes():
         start_color="blue",
     )
     plotter.visualize_2d(
-        tree,
         mdg,
         "figures/holes_trees.pdf",
         draw_grid=False,
@@ -884,12 +860,12 @@ def test_viz_cohom():
 if __name__ == "__main__":
     # test_properties_one_hole_2D()
     # test_properties_holes_3D()
-    test_solver_cube()
-
+    # test_solver_cube()
     # test_scaling_solver()
     # plot_scaling()
 
-    # plot_tree_with_holes()
+    # plot_trees()
+    plot_tree_with_holes()
     # plot_trees_mdg()
     # test_properties_holes_2D()
     # test_viz_cohom()

@@ -1,10 +1,10 @@
-import pygeon as pg
-import porepy as pp
 import numpy as np
+import porepy as pp
+import pygeon as pg
 import scipy.sparse as sps
 
 
-def visualize_2d(tree, mdg: pg.MixedDimensionalGrid, fig_name=None, **kwargs):
+def visualize_2d(mdg: pg.MixedDimensionalGrid, fig_name=None, **kwargs):
     """
     Create a graphical illustration of the spanning tree superimposed on the grid.
 
@@ -69,6 +69,7 @@ def visualize_2d(tree, mdg: pg.MixedDimensionalGrid, fig_name=None, **kwargs):
         ax.set_ylim((min_coord[1] - padding, max_coord[1] + padding))
 
     ax.set_aspect("equal")
+    tree = pg.SpanningTree(mdg, "all_bdry")
 
     # Draw the tree that spans all cells
     if draw_tree:
